@@ -7,6 +7,7 @@
 #include "hypercube.hpp"
 #include "ivfflat.hpp"
 #include "ivfpq.hpp"
+#include "bruteforce.hpp"
 
 Arguments parseArgs(int argc, char* argv[]) {
     Arguments a;
@@ -70,6 +71,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: specify -lsh or -hypercube or -ivfflat or -ivfpq\n";
         return 1;
     }
+    // add brute force search for comparison 
+        BruteForce bf(args);
+        bf.buildIndex(data);
+        bf.search(queries, out);
 
     std::cout << "Search completed.\n";
     return 0;

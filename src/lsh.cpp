@@ -84,103 +84,121 @@ std::uint64_t LSH::keyFor(const std::vector<float> &v, int li) const
 void LSH::search(const Dataset &queries, std::ofstream &out)
 {
     using namespace std::chrono;
-    out << "LSH\n";
+    out << "LSH\n\n";
 
     double totalAF = 0.0, totalRecall = 0.0;
     double totalApproxTime = 0.0, totalTrueTime = 0.0;
-    int queryCount = 0;
+    int queryCount = (int)queries.vectors.size();
 
-    auto startAll = high_resolution_clock::now();
-
-    for (int qi = 0; qi < (int)queries.vectors.size(); ++qi)
+    for (int qi = 0; qi < queryCount; ++qi)
     {
         const auto &q = queries.vectors[qi].values;
-        auto startApprox = high_resolution_clock::now();
 
-        // gather approximate candidates
-        std::vector<int> cands;
+        // --- Approximate search ---
+        auto t0 = high_resolution_clock::now();
+
+        std::vector<int> candidates;
         for (int li = 0; li < args.L; ++li)
         {
             auto key = keyFor(q, li);
             auto it = tables_[li].find(key);
             if (it != tables_[li].end())
-                cands.insert(cands.end(), it->second.begin(), it->second.end());
+                candidates.insert(candidates.end(), it->second.begin(), it->second.end());
         }
 
-        double bestA = std::numeric_limits<double>::infinity();
-        int idA = -1;
+        std::vector<std::pair<double, int>> distApprox;
+        distApprox.reserve(candidates.size());
         std::vector<int> rlist;
 
-        if (!cands.empty())
-        {
-            for (int id : cands)
-            {
-                double d = l2(q, data_.vectors[id].values);
-                if (args.rangeSearch && d <= args.R)
-                    rlist.push_back(id);
-                if (d < bestA)
-                {
-                    bestA = d;
-                    idA = id;
-                }
-            }
-        }
-
-        auto endApprox = high_resolution_clock::now();
-        double tApprox = duration<double>(endApprox - startApprox).count();
-
-        // compute true nearest
-        auto startTrue = high_resolution_clock::now();
-        double bestT = std::numeric_limits<double>::infinity();
-        int idT = -1;
-        for (int id = 0; id < (int)data_.vectors.size(); ++id)
+        for (int id : candidates)
         {
             double d = l2(q, data_.vectors[id].values);
-            if (d < bestT)
-            {
-                bestT = d;
-                idT = id;
-            }
+            distApprox.emplace_back(d, id);
+            if (args.rangeSearch && d <= args.R)
+                rlist.push_back(id);
         }
-        auto endTrue = high_resolution_clock::now();
-        double tTrue = duration<double>(endTrue - startTrue).count();
 
+        int N = std::min(args.N, (int)distApprox.size());
+        if (N > 0)
+        {
+            std::nth_element(distApprox.begin(), distApprox.begin() + N, distApprox.end());
+            std::sort(distApprox.begin(), distApprox.begin() + N);
+        }
+
+        auto t1 = high_resolution_clock::now();
+        double tApprox = duration<double>(t1 - t0).count();
         totalApproxTime += tApprox;
+
+        // --- True nearest computation ---
+        auto t2 = high_resolution_clock::now();
+        std::vector<std::pair<double, int>> distTrue;
+        distTrue.reserve(data_.vectors.size());
+        for (const auto &v : data_.vectors)
+            distTrue.emplace_back(l2(q, v.values), v.id);
+        std::nth_element(distTrue.begin(), distTrue.begin() + N, distTrue.end());
+        std::sort(distTrue.begin(), distTrue.begin() + N);
+        auto t3 = high_resolution_clock::now();
+        double tTrue = duration<double>(t3 - t2).count();
         totalTrueTime += tTrue;
 
-        double AF = (bestT > 0.0 && bestA < std::numeric_limits<double>::infinity())
-                        ? bestA / bestT
-                        : std::numeric_limits<double>::infinity();
-        double recall = (idA == idT) ? 1.0 : 0.0;
+        // --- Per-query metrics ---
+        double AFq = 0.0;
+        double recallq = 0.0;
+        int found = 0;
 
-        if (idA != -1)
+        for (int ni = 0; ni < N; ++ni)
         {
-            totalAF += AF;
-            totalRecall += recall;
-            queryCount++;
+            double da = distApprox[ni].first;
+            double dt = distTrue[ni].first;
+            AFq += (dt > 0.0 ? da / dt : 1.0);
+
+            int approx_id = distApprox[ni].second;
+            // check if this approx neighbor appears among true top-N
+            for (int j = 0; j < N; ++j)
+                if (approx_id == distTrue[j].second)
+                {
+                    recallq += 1.0;
+                    break;
+                }
+            found++;
         }
 
-        // per-query output
+        if (N > 0)
+        {
+            AFq /= N;
+            recallq /= N;
+        }
+
+        totalAF += AFq;
+        totalRecall += recallq;
+
+        // --- Output formatting ---
         out << "Query: " << qi << "\n";
-        out << "Nearest neighbor-1: " << idA << "\n";
-        out << "distanceApproximate: " << bestA << "\n";
-        out << "distanceTrue: " << bestT << "\n";
-        out << "R-near neighbors:\n";
-        for (int id : rlist)
-            out << id << "\n";
+        out << std::fixed << std::setprecision(6);
+        for (int ni = 0; ni < N; ++ni)
+        {
+            out << "Nearest neighbor-" << (ni + 1) << ": " << distApprox[ni].second << "\n";
+            out << "distanceApproximate: " << distApprox[ni].first << "\n";
+            out << "distanceTrue: " << distTrue[ni].first << "\n";
+        }
+        out << "\nR-near neighbors:\n";
+        for (int id : rlist) out << id << "\n";
         out << "\n";
+        out << "Average AF: " << AFq << "\n";
+        out << "Recall@N: " << recallq << "\n";
+        out << "QPS: " << (tApprox > 0.0 ? 1.0 / tApprox : 0.0) << "\n";
+        out << "tApproximateAverage: " << tApprox << "\n";
+        out << "tTrueAverage: " << tTrue << "\n\n";
     }
 
-    auto endAll = high_resolution_clock::now();
-    double totalTime = duration<double>(endAll - startAll).count();
+  // --- Summary over all queries ---
+    double avgAF = totalAF / queryCount;
+    double avgRecall = totalRecall / queryCount;
+    double avgApprox = totalApproxTime / queryCount;
+    double avgTrue = totalTrueTime / queryCount;
+    double qps = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
 
-    double avgAF = (queryCount > 0) ? totalAF / queryCount : 0.0;
-    double avgRecall = (queryCount > 0) ? totalRecall / queryCount : 0.0;
-    double qps = (totalTime > 0) ? queryCount / totalTime : 0.0;
-    double avgApprox = (queryCount > 0) ? totalApproxTime / queryCount : 0.0;
-    double avgTrue = (queryCount > 0) ? totalTrueTime / queryCount : 0.0;
-
-    out << std::fixed << std::setprecision(6);
+    out << "---- Summary (averages over queries) ----\n";
     out << "Average AF: " << avgAF << "\n";
     out << "Recall@N: " << avgRecall << "\n";
     out << "QPS: " << qps << "\n";
