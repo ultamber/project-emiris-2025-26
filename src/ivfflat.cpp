@@ -5,16 +5,19 @@
 #include <chrono>
 #include <iomanip>
 
-double IVFFlat::l2(const std::vector<float>& a, const std::vector<float>& b) {
+double IVFFlat::l2(const std::vector<float> &a, const std::vector<float> &b)
+{
     double s = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
+    for (size_t i = 0; i < a.size(); ++i)
+    {
         double d = a[i] - b[i];
         s += d * d;
     }
     return std::sqrt(s);
 }
 
-void IVFFlat::kmeans(const std::vector<std::vector<float>>& P, int k, int iters, unsigned seed) {
+void IVFFlat::kmeans(const std::vector<std::vector<float>> &P, int k, int iters, unsigned seed)
+{
     int N = P.size(), D = P[0].size();
     std::mt19937_64 rng(seed);
     std::uniform_int_distribution<int> uni(0, N - 1);
@@ -22,7 +25,8 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>>& P, int k, int iters,
     centroids_.assign(k, std::vector<float>(D, 0));
     std::vector<int> init;
     init.reserve(k);
-    for (int i = 0; i < k; ++i) {
+    for (int i = 0; i < k; ++i)
+    {
         int id = uni(rng);
         while (std::find(init.begin(), init.end(), id) != init.end())
             id = uni(rng);
@@ -31,29 +35,44 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>>& P, int k, int iters,
     }
 
     std::vector<int> assign(N, -1), cnt(k, 0);
-    for (int it = 0; it < iters; ++it) {
+    for (int it = 0; it < iters; ++it)
+    {
         bool ch = false;
-        for (int i = 0; i < N; ++i) {
+        for (int i = 0; i < N; ++i)
+        {
             int best = -1;
             double bd = std::numeric_limits<double>::infinity();
-            for (int c = 0; c < k; ++c) {
+            for (int c = 0; c < k; ++c)
+            {
                 double d = l2(P[i], centroids_[c]);
-                if (d < bd) { bd = d; best = c; }
+                if (d < bd)
+                {
+                    bd = d;
+                    best = c;
+                }
             }
-            if (assign[i] != best) { assign[i] = best; ch = true; }
+            if (assign[i] != best)
+            {
+                assign[i] = best;
+                ch = true;
+            }
         }
-        if (!ch) break;
-        for (int c = 0; c < k; ++c) {
+        if (!ch)
+            break;
+        for (int c = 0; c < k; ++c)
+        {
             std::fill(centroids_[c].begin(), centroids_[c].end(), 0);
             cnt[c] = 0;
         }
-        for (int i = 0; i < N; ++i) {
+        for (int i = 0; i < N; ++i)
+        {
             int c = assign[i];
             ++cnt[c];
             for (int d = 0; d < D; ++d)
                 centroids_[c][d] += P[i][d];
         }
-        for (int c = 0; c < k; ++c) {
+        for (int c = 0; c < k; ++c)
+        {
             if (cnt[c])
                 for (int d = 0; d < D; ++d)
                     centroids_[c][d] /= (float)cnt[c];
@@ -67,7 +86,8 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>>& P, int k, int iters,
         lists_[assign[i]].push_back(i);
 }
 
-void IVFFlat::buildIndex(const Dataset& data) {
+void IVFFlat::buildIndex(const Dataset &data)
+{
     data_ = data;
     dim_ = data.dimension;
     k_ = args.kclusters;
@@ -75,13 +95,14 @@ void IVFFlat::buildIndex(const Dataset& data) {
 
     std::vector<std::vector<float>> P;
     P.reserve(data_.vectors.size());
-    for (auto& v : data_.vectors)
+    for (auto &v : data_.vectors)
         P.push_back(v.values);
 
     kmeans(P, k_, 25, (unsigned)args.seed);
 }
 
-void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
+void IVFFlat::search(const Dataset &queries, std::ofstream &out)
+{
     using namespace std::chrono;
     out << "IVFFlat\n";
 
@@ -94,8 +115,9 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
 
     auto startAll = high_resolution_clock::now();
 
-    for (int qi = 0; qi < (int)queries.vectors.size(); ++qi) {
-        const auto& q = queries.vectors[qi].values;
+    for (int qi = 0; qi < (int)queries.vectors.size(); ++qi)
+    {
+        const auto &q = queries.vectors[qi].values;
         auto startApprox = high_resolution_clock::now();
 
         // nearest centroids
@@ -108,7 +130,8 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
 
         // candidates
         std::vector<int> cand;
-        for (int i = 0; i < use; ++i) {
+        for (int i = 0; i < use; ++i)
+        {
             int cid = cds[i].second;
             cand.insert(cand.end(), lists_[cid].begin(), lists_[cid].end());
         }
@@ -117,11 +140,18 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
         double bestA = std::numeric_limits<double>::infinity();
         std::vector<int> rlist;
 
-        if (!cand.empty()) {
-            for (int id : cand) {
+        if (!cand.empty())
+        {
+            for (int id : cand)
+            {
                 double d = l2(q, data_.vectors[id].values);
-                if (doRange && d <= R) rlist.push_back(id);
-                if (d < bestA) { bestA = d; idA = id; }
+                if (doRange && d <= R)
+                    rlist.push_back(id);
+                if (d < bestA)
+                {
+                    bestA = d;
+                    idA = id;
+                }
             }
         }
 
@@ -132,9 +162,14 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
         auto startTrue = high_resolution_clock::now();
         int idT = -1;
         double bestT = std::numeric_limits<double>::infinity();
-        for (int id = 0; id < (int)data_.vectors.size(); ++id) {
+        for (int id = 0; id < (int)data_.vectors.size(); ++id)
+        {
             double d = l2(q, data_.vectors[id].values);
-            if (d < bestT) { bestT = d; idT = id; }
+            if (d < bestT)
+            {
+                bestT = d;
+                idT = id;
+            }
         }
         auto endTrue = high_resolution_clock::now();
         double tTrue = duration<double>(endTrue - startTrue).count();
@@ -147,24 +182,29 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
                         : std::numeric_limits<double>::infinity();
         double recall = (idA == idT) ? 1.0 : 0.0;
 
-        if (idA != -1) {
+        if (idA != -1)
+        {
             totalAF += AF;
             totalRecall += recall;
             queryCount++;
         }
 
         out << "Query: " << qi << "\n";
-        if (idA >= 0) {
+        if (idA >= 0)
+        {
             out << "Nearest neighbor-1: " << idA << "\n"
                 << "distanceApproximate: " << bestA << "\n"
                 << "distanceTrue: " << bestT << "\n";
-        } else {
+        }
+        else
+        {
             out << "Nearest neighbor-1: -1\n"
                 << "distanceApproximate: inf\n"
                 << "distanceTrue: " << bestT << "\n";
         }
         out << "R-near neighbors:\n";
-        for (int id : rlist) out << id << "\n";
+        for (int id : rlist)
+            out << id << "\n";
         out << "\n";
     }
 
@@ -183,4 +223,146 @@ void IVFFlat::search(const Dataset& queries, std::ofstream& out) {
     out << "QPS: " << qps << "\n";
     out << "tApproximateAverage: " << avgApprox << "\n";
     out << "tTrueAverage: " << avgTrue << "\n";
+}
+
+// --- Overall silhouette score (as before) ---
+double IVFFlat::silhouetteScore() const
+{
+    int N = data_.vectors.size();
+    int k = centroids_.size();
+    if (N == 0 || k <= 1)
+        return 0.0;
+
+    std::vector<int> label(N, -1);
+    for (int c = 0; c < k; ++c)
+        for (int id : lists_[c])
+            label[id] = c;
+
+    double total = 0.0;
+    int validPoints = 0;
+
+    for (int i = 0; i < N; ++i)
+    {
+        int ci = label[i];
+        if (ci < 0)
+            continue;
+        const auto &xi = data_.vectors[i].values;
+
+        // a(i): mean distance within same cluster
+        double a_i = 0.0;
+        int sameCount = 0;
+        for (int id : lists_[ci])
+        {
+            if (id == i)
+                continue;
+            a_i += l2(xi, data_.vectors[id].values);
+            ++sameCount;
+        }
+        if (sameCount > 0)
+            a_i /= sameCount;
+        else
+            a_i = 0.0;
+
+        // b(i): mean distance to nearest other cluster
+        double b_i = std::numeric_limits<double>::infinity();
+        for (int c = 0; c < k; ++c)
+        {
+            if (c == ci || lists_[c].empty())
+                continue;
+            double sum = 0.0;
+            for (int id : lists_[c])
+                sum += l2(xi, data_.vectors[id].values);
+            double avg = sum / lists_[c].size();
+            if (avg < b_i)
+                b_i = avg;
+        }
+
+        // silhouette formula from the lecture
+        double s_i = 0.0;
+        if (a_i < b_i)
+            s_i = 1.0 - (a_i / b_i);
+        else if (a_i > b_i)
+            s_i = (b_i / a_i) - 1.0;
+        else
+            s_i = 0.0;
+
+        total += s_i;
+        ++validPoints;
+    }
+
+    return (validPoints > 0) ? total / validPoints : 0.0;
+}
+
+// --- Per-cluster silhouette averages (Slide 45) ---
+std::vector<double> IVFFlat::silhouettePerCluster() const
+{
+    int N = data_.vectors.size();
+    int k = centroids_.size();
+    if (N == 0 || k <= 1)
+        return {};
+
+    std::vector<int> label(N, -1);
+    for (int c = 0; c < k; ++c)
+        for (int id : lists_[c])
+            label[id] = c;
+
+    std::vector<double> clusterSum(k, 0.0);
+    std::vector<int> clusterCount(k, 0);
+
+    for (int i = 0; i < N; ++i)
+    {
+        int ci = label[i];
+        if (ci < 0)
+            continue;
+        const auto &xi = data_.vectors[i].values;
+
+        // a(i)
+        double a_i = 0.0;
+        int sameCount = 0;
+        for (int id : lists_[ci])
+        {
+            if (id == i)
+                continue;
+            a_i += l2(xi, data_.vectors[id].values);
+            ++sameCount;
+        }
+        if (sameCount > 0)
+            a_i /= sameCount;
+        else
+            a_i = 0.0;
+
+        // b(i)
+        double b_i = std::numeric_limits<double>::infinity();
+        for (int c = 0; c < k; ++c)
+        {
+            if (c == ci || lists_[c].empty())
+                continue;
+            double sum = 0.0;
+            for (int id : lists_[c])
+                sum += l2(xi, data_.vectors[id].values);
+            double avg = sum / lists_[c].size();
+            if (avg < b_i)
+                b_i = avg;
+        }
+
+        double s_i = 0.0;
+        if (a_i < b_i)
+            s_i = 1.0 - (a_i / b_i);
+        else if (a_i > b_i)
+            s_i = (b_i / a_i) - 1.0;
+        else
+            s_i = 0.0;
+
+        clusterSum[ci] += s_i;
+        ++clusterCount[ci];
+    }
+
+    std::vector<double> clusterAvg(k, 0.0);
+    for (int c = 0; c < k; ++c)
+        if (clusterCount[c] > 0)
+            clusterAvg[c] = clusterSum[c] / clusterCount[c];
+        else
+            clusterAvg[c] = 0.0;
+
+    return clusterAvg;
 }

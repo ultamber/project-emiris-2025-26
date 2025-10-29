@@ -166,10 +166,21 @@ For a query `q`:
 
 - Uses classic Lloyd’s K-Means (25 iterations).
 - Stores:
-  - `centroids_`: K-Means centers.
-  - `lists_`: inverted lists of IDs.
+- `centroids_`: K-Means centers.
+- `lists_`: inverted lists of IDs.
 - Parameters: `kclusters`, `nprobe`.
 - Fully matches slides 47–48.
+
+!! Added silhouette evaluation
+s(i)=(b(i)−a(i))/max(a(i),b(i))
+a(i): average distance of point i to other points in the same cluster
+b(i): average distance of point i to points in the nearest (2nd-best) cluster
+
+| s(i) range | Interpretation              |
+| ---------- | --------------------------- |
+| -> 1       | Point is well clustered     |
+| ~ 0        | Point lies between clusters |
+| -> −1      | Point likely misclassified  |
 
 ---
 
@@ -277,3 +288,11 @@ Together, they cover both major families of modern ANN techniques:
 - **Quantization–based** approaches.
 
 These implementations follow the theoretical definitions and pseudocode in the course material.
+
+notes :
+| Goal | Parameter tweak |
+| :----------------------------------------- | :---------------------------- |
+| Faster queries with small recall drop | lower `L` or `w` slightly |
+| Maximum recall (approach 1.0) | increase `L`→15–20, `w`→8–10 |
+| Compare robustness | run multiple seeds |
+| Evaluate clustering quality (for IVF-Flat) | use your silhouette functions |
