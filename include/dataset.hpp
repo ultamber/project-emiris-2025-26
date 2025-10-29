@@ -4,13 +4,11 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstdint>
-
 struct VectorData
 {
     int id;
     std::vector<float> values;
 };
-
 class Dataset
 {
 public:
@@ -23,7 +21,7 @@ public:
 
 // Helper: read 32-bit big-endian integer
 inline uint32_t readBigEndian(std::ifstream &f)
-{
+{ 
     unsigned char bytes[4];
     f.read((char *)bytes, 4);
     return (uint32_t(bytes[0]) << 24) | (uint32_t(bytes[1]) << 16) |
@@ -35,7 +33,6 @@ inline void Dataset::load(const std::string &path, const std::string &type)
     std::ifstream f(path, std::ios::binary);
     if (!f)
         throw std::runtime_error("Cannot open file: " + path);
-
     if (type == "mnist")
     {
         uint32_t magic = readBigEndian(f);

@@ -1,30 +1,28 @@
 # 🧠 Detailed Explanation of Implemented Algorithms
 
-This project implements four approximate nearest-neighbor (ANN) algorithms **exactly as taught** in the “Nearest Neighbor and Clustering” lecture (1.nnCluster.pdf).  
-All algorithms operate in **Euclidean space** and are evaluated on the **MNIST** dataset.
-
----
-
 ## 1️⃣ Locality Sensitive Hashing (LSH)
 
 ### 🔹 Concept and Motivation
+
 In high-dimensional spaces, exact nearest-neighbor (NN) search is computationally expensive.  
 **Locality Sensitive Hashing (LSH)** reduces comparisons by using random hash functions that **preserve locality**:  
 similar points are more likely to hash into the same bucket.
+https://en.wikipedia.org/wiki/Locality-sensitive_hashing
 
 ---
 
 ### 🔹 Mathematical Definition
-For the Euclidean (L2) distance, each hash function is defined as: h_{v,t}(p) = floor((v · p + t) / w)
+
+For the Euclidean (L2) distance, each hash function is defined as: h\_{v,t}(p) = floor((v · p + t) / w)
 
 where:
+
 - `v` is a random vector from `N(0,1)^d`,
 - `t` is a random offset from `[0, w)`,
 - `w` is the bucket width.
 
 A composite key is built by concatenating `k` such functions:
 g(p) = (h_1(p), h_2(p), ..., h_k(p))
-
 
 and **L** independent hash tables are created with different random `g_i`.
 
@@ -33,12 +31,14 @@ and **L** independent hash tables are created with different random `g_i`.
 ### 🔹 Algorithm Steps
 
 **Build phase**
+
 1. Generate `L` groups of `k` random vectors and offsets.
 2. For each vector `p`:
    - Compute its hash keys `g_1(p), ..., g_L(p)`.
    - Insert `p`’s ID into each corresponding hash table bucket.
 
 **Query phase**
+
 1. Compute `g_i(q)` for each query `q`.
 2. Retrieve candidates from matching buckets.
 3. Compute true Euclidean distances for candidates and return the nearest.
@@ -46,35 +46,38 @@ and **L** independent hash tables are created with different random `g_i`.
 ---
 
 ### 🔹 Implementation Notes
+
 - Stores `L` hash tables (`unordered_map<uint64_t, vector<int>>`).
 - Uses Gaussian projections and uniform offsets.
 - Parameters: `k`, `L`, and `w`.
-- Matches exactly the algorithm from lecture slides 11–21.
+- the algorithm is from lecture slides 11–21.
 
 ---
 
 ### 🔹 Advantages / Limitations
-| Strengths | Limitations |
-|------------|-------------|
-| Simple and theoretically grounded | Parameter tuning required (`k`, `L`, `w`) |
-| Efficient for very high dimensions | May produce empty buckets |
-| Probabilistic guarantees for L2 | High memory for large L |
+
+| Strengths                          | Limitations                               |
+| ---------------------------------- | ----------------------------------------- |
+| Simple and theoretically grounded  | Parameter tuning required (`k`, `L`, `w`) |
+| Efficient for very high dimensions | May produce empty buckets                 |
+| Probabilistic guarantees for L2    | High memory for large L                   |
 
 ---
 
 ## 2️⃣ Hypercube Method
 
 ### 🔹 Concept and Motivation
+
 The **Hypercube algorithm** is a variant of LSH that uses **binary projections** instead of multiple hash tables.  
 Each point is placed in a vertex of a `kproj`-dimensional cube based on the signs of random projections.
 
 ---
 
 ### 🔹 Mathematical Definition
+
 Each bit of the code is computed as:
 f_i(p) = 1 if (r_i · p) ≥ 0
 f_i(p) = 0 otherwise
-
 
 where `r_i` are random projection vectors.
 
@@ -85,10 +88,12 @@ Each data point is stored in a vertex identified by the binary code `(f_1, f_2, 
 ### 🔹 Algorithm Steps
 
 **Build phase**
+
 1. Generate `kproj` random vectors `r_i`.
 2. Compute binary code for each vector and insert into corresponding vertex bucket.
 
 **Query phase**
+
 1. Compute binary code for query `q`.
 2. Probe nearby vertices by flipping bits (Hamming distance).
 3. Stop after visiting `probes` vertices or examining `M` points.
@@ -97,29 +102,32 @@ Each data point is stored in a vertex identified by the binary code `(f_1, f_2, 
 ---
 
 ### 🔹 Implementation Notes
+
 - Uses a single `unordered_map<uint64_t, vector<int>>` for cube vertices.
 - `probesList()` enumerates nearby vertices in increasing Hamming distance.
 - Parameters:
   - `kproj`: cube dimension,
   - `M`: max candidate points,
   - `probes`: number of vertices explored.
-- Matches slides 24–25 exactly.
+- the algorithm is on slides 24–25 .
 
 ---
 
 ### 🔹 Advantages / Limitations
-| Strengths | Limitations |
-|------------|-------------|
-| Requires only one structure | Must tune `M` and `probes` |
-| Works for binary or dense features | May become sparse for large `kproj` |
-| Equivalent to random-projection LSH | Slightly higher complexity |
+
+| Strengths                           | Limitations                         |
+| ----------------------------------- | ----------------------------------- |
+| Requires only one structure         | Must tune `M` and `probes`          |
+| Works for binary or dense features  | May become sparse for large `kproj` |
+| Equivalent to random-projection LSH | Slightly higher complexity          |
 
 ---
 
 ## 3️⃣ Inverted File with Flat Quantization (IVFFlat)
 
 ### 🔹 Concept and Motivation
-The **Inverted File (IVF)** method organizes the dataset into *coarse partitions* using K-Means clustering.  
+
+The **Inverted File (IVF)** method organizes the dataset into _coarse partitions_ using K-Means clustering(https://en.wikipedia.org/wiki/K-means_clustering).  
 During queries, only the most relevant clusters are explored (`nprobe`), reducing distance computations.
 
 ---
@@ -130,9 +138,9 @@ During queries, only the most relevant clusters are explored (`nprobe`), reducin
 Divide the dataset into `kclusters` centroids `{c_j}`:
 c(x_i) = argmin_j ||x_i - c_j||
 
-
 **Search Phase**  
 For a query `q`:
+
 1. Compute distances to all centroids.
 2. Select top `nprobe` closest ones.
 3. Search exhaustively inside those clusters.
@@ -140,11 +148,14 @@ For a query `q`:
 ---
 
 ### 🔹 Algorithm Steps
+
 **Build phase**
+
 1. Run K-Means on dataset.
 2. Assign each point to its closest centroid (inverted lists).
 
 **Query phase**
+
 1. Compute query–centroid distances.
 2. Explore top `nprobe` lists.
 3. Return the closest point among candidates.
@@ -152,27 +163,41 @@ For a query `q`:
 ---
 
 ### 🔹 Implementation Notes
+
 - Uses classic Lloyd’s K-Means (25 iterations).
 - Stores:
-  - `centroids_`: K-Means centers.
-  - `lists_`: inverted lists of IDs.
+- `centroids_`: K-Means centers.
+- `lists_`: inverted lists of IDs.
 - Parameters: `kclusters`, `nprobe`.
 - Fully matches slides 47–48.
+
+!! Added silhouette evaluation
+s(i)=(b(i)−a(i))/max(a(i),b(i))
+a(i): average distance of point i to other points in the same cluster
+b(i): average distance of point i to points in the nearest (2nd-best) cluster
+
+| s(i) range | Interpretation              |
+| ---------- | --------------------------- |
+| -> 1       | Point is well clustered     |
+| ~ 0        | Point lies between clusters |
+| -> −1      | Point likely misclassified  |
 
 ---
 
 ### 🔹 Advantages / Limitations
-| Strengths | Limitations |
-|------------|-------------|
-| Fast for large datasets | Requires clustering step |
-| High recall with few probes | No compression |
-| Simple and stable | Needs retraining for new data |
+
+| Strengths                   | Limitations                   |
+| --------------------------- | ----------------------------- |
+| Fast for large datasets     | Requires clustering step      |
+| High recall with few probes | No compression                |
+| Simple and stable           | Needs retraining for new data |
 
 ---
 
 ## 4️⃣ Inverted File with Product Quantization (IVFPQ)
 
 ### 🔹 Concept and Motivation
+
 **IVFPQ** extends IVFFlat by encoding residuals (differences from centroids) using **Product Quantization (PQ)**.  
 This compresses vectors into compact byte codes, reducing memory and distance computation cost.
 
@@ -181,24 +206,26 @@ This compresses vectors into compact byte codes, reducing memory and distance co
 ### 🔹 Mathematical Definition
 
 1. **Coarse quantization** (same as IVFFlat):
-c(x) = nearest centroid
-r = x - c(x) // residual
-
+   c(x) = nearest centroid
+   r = x - c(x) // residual
 
 2. **Product Quantization (PQ):**
+
 - Split residual `r` into `M` sub-vectors.
 - Train K-Means in each subspace with `Ks = 2^nbits` centroids.
 - Encode each subvector by the index of its nearest sub-codeword.
 
 3. **Approximate distance (ADC):**
-For query `q`:
-||q - x||^2 ≈ Σ_m ||q^m - c_m[k_m]||^2
-where `k_m` are PQ indices.
+   For query `q`:
+   ||q - x||^2 ≈ Σ_m ||q^m - c_m[k_m]||^2
+   where `k_m` are PQ indices.
 
 ---
 
 ### 🔹 Algorithm Steps
+
 **Build phase**
+
 1. Train coarse K-Means centroids.
 2. Compute residuals.
 3. Split residuals into `Msub` subspaces.
@@ -206,16 +233,20 @@ where `k_m` are PQ indices.
 5. Encode all vectors into PQ codes.
 
 **Query phase**
+
 1. Find `nprobe` nearest centroids.
 2. For each:
+
 - Compute query residual.
 - Build look-up tables (LUTs) for all subspaces.
 - Estimate distances using precomputed LUT values.
+
 3. Return smallest approximate distance.
 
 ---
 
 ### 🔹 Implementation Notes
+
 - Parameters: `kclusters`, `nprobe`, `Msubvectors`, `nbits`.
 - Uses residuals and subspace partitioning as taught.
 - Implements **Asymmetric Distance Computation (ADC)** with LUTs.
@@ -224,22 +255,23 @@ where `k_m` are PQ indices.
 ---
 
 ### 🔹 Advantages / Limitations
-| Strengths | Limitations |
-|------------|-------------|
+
+| Strengths                                  | Limitations                         |
+| ------------------------------------------ | ----------------------------------- |
 | Very compact memory (up to 16–32× smaller) | Introduces small quantization error |
-| Fast distance computation via LUTs | Requires training PQ codebooks |
-| Great for billion-scale datasets | Slightly complex indexing |
+| Fast distance computation via LUTs         | Requires training PQ codebooks      |
+| Great for billion-scale datasets           | Slightly complex indexing           |
 
 ---
 
 ## 📊 Comparative Summary
 
-| Algorithm | Type | Data Partitioning | Search Method | Compression | Based on Slides |
-|------------|------|------------------|---------------|--------------|----------------|
-| **LSH** | Randomized hashing | Random hyperplanes (`k`, `L`, `w`) | Hash buckets | No | 11–21 |
-| **Hypercube** | Binary hashing | Single binary cube | Hamming probes | No | 24–25 |
-| **IVFFlat** | Clustering-based | K-Means centroids | `nprobe` lists | No | 47–48 |
-| **IVFPQ** | Quantized clustering | K-Means + PQ | LUT distance | Yes | 49–50 |
+| Algorithm     | Type                 | Data Partitioning                | Search Method  | Compression |
+| ------------- | -------------------- | -------------------------------- | -------------- | ----------- |
+| **LSH**       | Randomized hashing   | Random hyperplanes (`k`,`L`,`w`) | Hash buckets   | No          |
+| **Hypercube** | Binary hashing       | Single binary cube               | Hamming probes | No          |
+| **IVFFlat**   | Clustering-based     | K-Means centroids                | `nprobe` lists | No          |
+| **IVFPQ**     | Quantized clustering | K-Means + PQ                     | LUT distance   | Yes         |
 
 ---
 
@@ -247,13 +279,20 @@ where `k_m` are PQ indices.
 
 Each algorithm offers a different trade-off:
 
-- **LSH / Hypercube** → *probabilistic hashing*, ideal for very high-dimensional data.
-- **IVFFlat / IVFPQ** → *data-driven quantization*, ideal for dense large-scale datasets.
+- **LSH / Hypercube** → _probabilistic hashing_, ideal for very high-dimensional data.
+- **IVFFlat / IVFPQ** → _data-driven quantization_, ideal for dense large-scale datasets.
 
 Together, they cover both major families of modern ANN techniques:
+
 - **Random projection–based** approaches, and
 - **Quantization–based** approaches.
 
 These implementations follow the theoretical definitions and pseudocode in the course material.
 
-
+notes :
+| Goal | Parameter tweak |
+| :----------------------------------------- | :---------------------------- |
+| Faster queries with small recall drop | lower `L` or `w` slightly |
+| Maximum recall (approach 1.0) | increase `L`→15–20, `w`→8–10 |
+| Compare robustness | run multiple seeds |
+| Evaluate clustering quality (for IVF-Flat) | use your silhouette functions |
