@@ -5,8 +5,8 @@ set -euo pipefail
 # Config: edit these paths
 # -----------------------------
 BIN=./bin/search
-DATA=./datasets/MNIST/train-images.idx3-ubyte
-QUER=./datasets/MNIST/t10k-images.idx3-ubyte
+DATA=./datasets/SIFT/sift_base.fvecs
+QUER=./datasets/SIFT/sift_query.fvecs
 OUTDIR=./runs
 TYPE=mnist
 
