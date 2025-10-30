@@ -296,3 +296,5 @@ notes :
 | Maximum recall (approach 1.0) | increase `L`→15–20, `w`→8–10 |
 | Compare robustness | run multiple seeds |
 | Evaluate clustering quality (for IVF-Flat) | use your silhouette functions |
+
+also : if we normalize vectors , R for MNIST should change .

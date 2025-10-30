@@ -63,6 +63,26 @@ Arguments parseArgs(int argc, char *argv[])
             a.nbits = std::stoi(argv[++i]);
         else if (flag == "-Msub" && i + 1 < argc)
             a.Msubvectors = std::stoi(argv[++i]);
+        else if (flag == "-k" && i + 1 < argc)
+            a.k = std::stoi(argv[++i]);
+        else if (flag == "-L" && i + 1 < argc)
+            a.L = std::stoi(argv[++i]);
+        else if (flag == "-w" && i + 1 < argc)
+            a.w = std::stod(argv[++i]);
+        else if (flag == "-kproj" && i + 1 < argc)
+            a.kproj = std::stoi(argv[++i]);
+        else if (flag == "-M" && i + 1 < argc)
+            a.M = std::stoi(argv[++i]);
+        else if (flag == "-probes" && i + 1 < argc)
+            a.probes = std::stoi(argv[++i]);
+        else if (flag == "-kclusters" && i + 1 < argc)
+            a.kclusters = std::stoi(argv[++i]);
+        else if (flag == "-nprobe" && i + 1 < argc)
+            a.nprobe = std::stoi(argv[++i]);
+        else if (flag == "-nbits" && i + 1 < argc)
+            a.nbits = std::stoi(argv[++i]);
+        else if (flag == "-Msub" && i + 1 < argc)
+            a.Msubvectors = std::stoi(argv[++i]);
     }
     return a;
 }
@@ -128,10 +148,6 @@ int main(int argc, char *argv[])
         std::cerr << "Error: specify -lsh or -hypercube or -ivfflat or -ivfpq\n";
         return 1;
     }
-    // add brute force search for comparison 
-        BruteForce bf(args);
-        bf.buildIndex(data);
-        bf.search(queries, out);
 
     std::cout << "Search completed.\n";
     return 0;
