@@ -9,6 +9,7 @@ SRC_DIR := src
 INC_DIR := include
 OBJ_DIR := obj
 BIN_DIR := bin
+RUN_DIR := runs
 
 TARGET := $(BIN_DIR)/search
 
@@ -29,7 +30,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_DIR) $(BIN_DIR) $(RUN_DIR)
 
 mnist:
 	@$(TARGET) -d ./datasets/MNIST/train-images.idx3-ubyte \

@@ -5,16 +5,101 @@ set -euo pipefail
 # Config: edit these paths
 # -----------------------------
 BIN=./bin/search
-DATA=./datasets/SIFT/sift_base.fvecs
-QUER=./datasets/SIFT/sift_query.fvecs
-OUTDIR=./runs
+
+# Defaults (can be overridden via flags)
 TYPE=mnist
+# leave DATA/QUER empty so we set them after parsing TYPE (and after validating lowercase)
+DATA=""
+QUER=""
+OUTDIR=./runs
 
 mkdir -p "$OUTDIR"
+
+# Parse optional parameters (flags only):
+# Usage: run_grid.sh -t TYPE -d DATA -q QUERY
+usage() {
+  cat <<EOF
+Usage: $0 [-t TYPE] [-d INPUT_FILE] [-q QUERY_FILE]
+
+Flags (all optional):
+  -t, --type TYPE       Dataset type: 'mnist' (default) or 'sift' (only lowercase accepted)
+  -d, --data PATH       Path to input dataset file (overrides default for the chosen type)
+  -q, --query PATH      Path to query dataset file (overrides default for the chosen type)
+  -h, --help            Show this help message
+
+EOF
+  exit 0
+}
+
+# Quick --help
+for a in "$@"; do
+  case "$a" in
+    -h|--help) usage ;;
+  esac
+done
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+    -t|--type)
+      TYPE="$2"
+      shift 2
+      ;;
+    -d|--data)
+      DATA="$2"
+      shift 2
+      ;;
+    -q|--query)
+      QUER="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      echo "Positional arguments are not supported. See help for the available details." >&2
+      usage
+      ;;
+  esac
+done
+
+# Enforce lowercase-only TYPE values and valid choices
+if [[ "$TYPE" != "sift" && "$TYPE" != "mnist" ]]; then
+  echo "Error: Invalid type '$TYPE'. Supported lowercase types: 'sift', 'mnist'." >&2
+  exit 1
+fi
+
+# If DATA/QUER were not explicitly provided, set sensible defaults based on TYPE
+if [[ -z "${DATA:-}" ]]; then
+  if [[ "$TYPE" == "sift" ]]; then
+    DATA=./datasets/SIFT/input.dat
+  else
+    DATA=./datasets/MNIST/input.dat
+  fi
+fi
+if [[ -z "${QUER:-}" ]]; then
+  if [[ "$TYPE" == "sift" ]]; then
+    QUER=./datasets/SIFT/query.dat
+  else
+    QUER=./datasets/MNIST/query.dat
+  fi
+fi
+
+echo "Using dataset type: $TYPE"
+echo "Input file: $DATA"
+echo "Query file: $QUER"
+echo
 
 # Build
 echo "==> Building..."
 make -j
+echo
 
 # Helper: parse metrics from output file
 # Prints: AF,Recall,QPS,tApprox,tTrue
@@ -46,7 +131,7 @@ parse_lsh_diag () {
   echo "${W},${TRANGE},${MINH},${NEGC}"
 }
 
-SUMMARY="${OUTDIR}/summary.csv"
+SUMMARY="${OUTDIR}/summary_${TYPE}.csv"
 echo "algo,params,AF,Recall,QPS,tApprox,tTrue,w,t_min,t_max,min_h_seen,neg_h_count" > "$SUMMARY"
 
 run_lsh () {
@@ -91,6 +176,7 @@ run_lsh () {
       done
     done
   done
+  echo
 }
 
 run_cube () {
@@ -116,6 +202,7 @@ run_cube () {
       done
     done
   done
+  echo
 }
 
 run_ivfflat () {
@@ -138,6 +225,7 @@ run_ivfflat () {
       done
     done
   done
+  echo
 }
 
 run_ivfpq () {
@@ -167,6 +255,7 @@ run_ivfpq () {
       done
     done
   done
+  echo
 }
 
 # Run all batches
