@@ -79,12 +79,6 @@ void BruteForce::search(const Dataset& queries, std::ofstream& out) {
         out << "\nR-near neighbors:\n";
         for (int id : rnear) out << id << "\n";
         out << "\n";
-
-        out << "Average AF: " << AFq << "\n";
-        out << "Recall@N: " << recallq << "\n";
-        out << "QPS: " << (tQuery > 0.0 ? 1.0 / tQuery : 0.0) << "\n";
-        out << "tApproximateAverage: " << tQuery << "\n";
-        out << "tTrueAverage: " << tQuery << "\n\n";
     }
 
     // --- Summary over all queries ---
