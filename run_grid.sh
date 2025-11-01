@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Number of threads for OpenMP-parallelized algorithms
-export OMP_NUM_THREADS=8
-
 # -----------------------------
 # Config: edit these paths
 # -----------------------------
