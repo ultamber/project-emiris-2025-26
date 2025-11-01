@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Number of threads for OpenMP-parallelized algorithms
+export OMP_NUM_THREADS=8
+
 # -----------------------------
 # Config: edit these paths
 # -----------------------------
@@ -105,11 +108,11 @@ echo
 # Prints: AF,Recall,QPS,tApprox,tTrue
 parse_metrics () {
   local file="$1"
-  local AF=$(grep -m1 "^Average AF:" "$file" | awk '{print $3}')
-  local RC=$(grep -m1 "^Recall@N:" "$file" | awk '{print $2}')
-  local QP=$(grep -m1 "^QPS:" "$file" | awk '{print $2}')
-  local TA=$(grep -m1 "^tApproximateAverage:" "$file" | awk '{print $2}')
-  local TT=$(grep -m1 "^tTrueAverage:" "$file" | awk '{print $2}')
+  local AF=$(grep "^Average AF:" "$file" | tail -n1 | awk '{print $3}')
+  local RC=$(grep "^Recall@N:" "$file" | tail -n1 | awk '{print $2}')
+  local QP=$(grep "^QPS:" "$file" | tail -n1 | awk '{print $2}')
+  local TA=$(grep "^tApproximateAverage:" "$file" | tail -n1 | awk '{print $2}')
+  local TT=$(grep "^tTrueAverage:" "$file" | tail -n1 | awk '{print $2}')
   echo "${AF},${RC},${QP},${TA},${TT}"
 }
 

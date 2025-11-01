@@ -126,15 +126,15 @@ int main(int argc, char *argv[])
     {
         IVFFlat alg(args);
         alg.buildIndex(data);
-        double sil = alg.silhouetteScore();
-        std::cout << std::fixed << std::setprecision(6);
-        std::cout << "\n=== Silhouette Evaluation ===\n";
-        std::cout << "Overall silhouette coefficient: " << sil << "\n";
+        // double sil = alg.silhouetteScore();
+        // std::cout << std::fixed << std::setprecision(6);
+        // std::cout << "\n=== Silhouette Evaluation ===\n";
+        // std::cout << "Overall silhouette coefficient: " << sil << "\n";
 
-        auto perCluster = alg.silhouettePerCluster();
-        for (size_t i = 0; i < perCluster.size(); ++i)
-            std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
-        std::cout << "=============================\n";
+        // auto perCluster = alg.silhouettePerCluster();
+        // for (size_t i = 0; i < perCluster.size(); ++i)
+        //     std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
+        // std::cout << "=============================\n";
         alg.search(queries, out);
     }
     else if (args.useIVFPQ)
