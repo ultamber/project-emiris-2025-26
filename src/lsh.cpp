@@ -29,56 +29,59 @@ double LSH::l2(const std::vector<float> &a, const std::vector<float> &b)
  */
 void LSH::buildIndex(const Dataset &data)
 {
-    // Store dataset and its dimension
     data_ = data;
-    dim_ = data.dimension;
-    w_ = args.w;                // Bucket width
-    int L = args.L, k = args.k; // L hash tables, k hash functions per table
+    dim_  = data.dimension;
+    w_    = args.w > 0 ? args.w : 4.0f;
+    int L = args.L > 0 ? args.L : 10;
+    int k = args.k > 0 ? args.k : 4;
 
-    // Initialize random number generators
+    // 1️⃣ TableSize heuristic (slide 20)
+    tableSize_ = std::max<size_t>(1, data_.vectors.size() / 4);
+
+    // 2️⃣ Random setup
     std::mt19937_64 rng(args.seed);
-    std::normal_distribution<double> normal(0.0, 1.0);    // For random projections
-    std::uniform_real_distribution<double> unif(0.0, w_); // For random shifts
+    std::normal_distribution<double> normal(0.0, 1.0);
+    std::uniform_real_distribution<float> unif(0.0f, w_);
+    std::uniform_int_distribution<uint32_t> distR(1u, (uint32_t)(MOD_M - 1));
 
-    // Initialize hash function parameters
-    a_.assign(L, std::vector<std::vector<float>>(k, std::vector<float>(dim_))); // Random projection vectors
-    t_.assign(L, std::vector<float>(k, 0.0f));                                  // Random shifts
-    tables_.assign(L, {});                                                      // Hash tables
+    // 3️⃣ Allocate parameters
+    a_.assign(L, std::vector<std::vector<float>>(k, std::vector<float>(dim_)));
+    t_.assign(L, std::vector<float>(k, 0.0f));
+    r_.assign(L, std::vector<long long>(k));
 
-    // Generate random projections and shifts for each hash function
-    for (int li = 0; li < L; ++li)
-    {
-        for (int j = 0; j < k; ++j)
-        {
-            // Generate random projection vector
+    // 4️⃣ Generate random vectors, shifts, and integer coefficients
+    for (int li = 0; li < L; ++li) {
+        for (int j = 0; j < k; ++j) {
             for (int d = 0; d < dim_; ++d)
                 a_[li][j][d] = (float)normal(rng);
-            t_[li][j] = (float)unif(rng);
-            t_min_ = std::min<double>(t_min_, t_[li][j]);
-            t_max_ = std::max<double>(t_max_, t_[li][j]);
+            t_[li][j] = unif(rng);
+            r_[li][j] = (long long)distR(rng);
         }
     }
 
-    // Insert all data points into hash tables
-    for (int id = 0; id < (int)data_.vectors.size(); ++id)
-    {
-        for (int li = 0; li < L; ++li)
-        {
-            auto key = keyFor(data_.vectors[id].values, li);
-            tables_[li][key].push_back(id);
+    // 5️⃣ Allocate L tables of TableSize buckets
+    tables_.assign(L, std::vector<std::vector<std::pair<int, std::uint64_t>>>(tableSize_));
+
+    // 6️⃣ Insert data points
+    for (int id = 0; id < (int)data_.vectors.size(); ++id) {
+        const auto &p = data_.vectors[id].values;
+        for (int li = 0; li < L; ++li) {
+            std::uint64_t IDp = computeID(p, li);
+            std::uint64_t g   = IDp % tableSize_;
+            tables_[li][g].push_back({id, IDp});
         }
     }
 
-    // Output debug information if LSH_DEBUG environment variable is set
-    if (std::getenv("LSH_DEBUG"))
-    {
+    if (std::getenv("LSH_DEBUG")) {
         std::cerr << "[LSH-DIAG] w=" << w_
-                  << " t_range=[" << t_min_ << "," << t_max_ << "]"
-                  << " min_h_seen=" << (min_h_seen_ == LLONG_MAX ? 0 : min_h_seen_)
+                  << " L=" << L << " k=" << k
+                  << " TableSize=" << tableSize_
+                  << " min_h_seen=" << (min_h_seen_==LLONG_MAX?0:min_h_seen_)
                   << " neg_h_count=" << neg_h_count_
                   << "\n";
     }
 }
+
 
 /**
  * Computes the hash key for a vector in a specific hash table
@@ -88,31 +91,8 @@ void LSH::buildIndex(const Dataset &data)
  */
 std::uint64_t LSH::keyFor(const std::vector<float> &v, int li) const
 {
-    // Initialize with FNV offset basis
-    std::uint64_t h = 1469598103934665603ULL;
-    const std::uint64_t prime = 1099511628211ULL; // FNV prime
-
-    for (int j = 0; j < args.k; ++j)
-    {
-        // Compute dot product for projection
-        double dot = 0.0;
-        for (int d = 0; d < dim_; ++d)
-            dot += a_[li][j][d] * v[d];
-
-        // Apply LSH hash function: floor((a·v + t)/w)
-        long long hj = (long long)std::floor((dot + t_[li][j]) / w_);
-
-        // Combine hash values using FNV-1a hash
-        h ^= (std::uint64_t)(hj * 11400714819323198485ull);
-        h *= prime;
-
-        // Update diagnostic counters
-        if (hj < min_h_seen_)
-            min_h_seen_ = hj;
-        if (hj < 0)
-            ++neg_h_count_;
-    }
-    return h;
+    std::uint64_t IDv = computeID(v, li);
+    return IDv % tableSize_; // g(p) = ID(p) mod TableSize
 }
 
 /**
@@ -125,137 +105,95 @@ void LSH::search(const Dataset &queries, std::ofstream &out)
     using namespace std::chrono;
     out << "LSH\n\n";
 
-    // Initialize performance tracking metrics
-    double totalAF = 0.0;         // Approximation factor sum
-    double totalRecall = 0.0;     // Recall sum
-    double totalApproxTime = 0.0; // Total time for approximate search
-    double totalTrueTime = 0.0;   // Total time for exact search
-    int queryCount = (int)queries.vectors.size();
+    double totalAF=0, totalRecall=0, totalApprox=0, totalTrue=0;
+    int qCount = (int)queries.vectors.size();
 
-    // Process each query vector
-    for (int qi = 0; qi < queryCount; ++qi)
-    {
+    for (int qi = 0; qi < qCount; ++qi) {
         const auto &q = queries.vectors[qi].values;
-
-        // --- Start approximate search using LSH ---
         auto t0 = high_resolution_clock::now();
 
-        // Collect candidate points from all L hash tables
         std::vector<int> candidates;
-        for (int li = 0; li < args.L; ++li)
-        {
-            auto key = keyFor(q, li);        // Get hash key for query in table li
-            auto it = tables_[li].find(key); // Look up bucket
-            if (it != tables_[li].end())
-                candidates.insert(candidates.end(), it->second.begin(), it->second.end());
-        }
+        size_t examined=0, hardCap = args.rangeSearch ? 20*args.L : 10*args.L;
 
-        // Calculate actual distances for candidate points
-        std::vector<std::pair<double, int>> distApprox; // (distance, point_id) pairs
-        distApprox.reserve(candidates.size());
-        std::vector<int> rlist; // List for range search results
+        // 1️⃣ Probe all L tables
+        for (int li = 0; li < args.L; ++li) {
+            std::uint64_t IDq = computeID(q, li);
+            std::uint64_t gq  = IDq % tableSize_;
+            const auto &bucket = tables_[li][gq];
 
-        // Process each candidate
-        for (int id : candidates)
-        {
-            double d = l2(q, data_.vectors[id].values); // Compute true distance
-            distApprox.emplace_back(d, id);
-            // If doing range search and point is within radius R, add to results
-            if (args.rangeSearch && d <= args.R)
-                rlist.push_back(id);
-        }
-
-        // Find and sort top-N approximate nearest neighbors
-        int N = std::min(args.N, (int)distApprox.size());
-        if (N > 0)
-        {
-            // Partition to get top N elements
-            std::nth_element(distApprox.begin(), distApprox.begin() + N, distApprox.end());
-            // Sort the top N for output
-            std::sort(distApprox.begin(), distApprox.begin() + N);
-        }
-
-        // Record time for approximate search
-        auto t1 = high_resolution_clock::now();
-        double tApprox = duration<double>(t1 - t0).count();
-        totalApproxTime += tApprox;
-
-        // --- Compute true nearest neighbors for comparison ---
-        auto t2 = high_resolution_clock::now();
-        std::vector<std::pair<double, int>> distTrue;
-        distTrue.reserve(data_.vectors.size());
-        // Calculate distances to all points
-        for (const auto &v : data_.vectors)
-            distTrue.emplace_back(l2(q, v.values), v.id);
-        // Find and sort top N true nearest neighbors
-        std::nth_element(distTrue.begin(), distTrue.begin() + N, distTrue.end());
-        std::sort(distTrue.begin(), distTrue.begin() + N);
-        auto t3 = high_resolution_clock::now();
-        double tTrue = duration<double>(t3 - t2).count();
-        totalTrueTime += tTrue;
-
-        // --- Calculate quality metrics for this query ---
-        double AFq = 0.0;     // Approximation factor for this query
-        double recallq = 0.0; // Recall for this query
-        int found = 0;        // Count of neighbors found
-
-        // Compare approximate vs true neighbors
-        for (int ni = 0; ni < N; ++ni)
-        {
-            // Calculate approximation factor
-            double da = distApprox[ni].first; // Approximate distance
-            double dt = distTrue[ni].first;   // True distance
-            AFq += (dt > 0.0 ? da / dt : 1.0);
-
-            // Check if approximate neighbor is among true top-N
-            int approx_id = distApprox[ni].second;
-            for (int j = 0; j < N; ++j)
-                if (approx_id == distTrue[j].second)
-                {
-                    recallq += 1.0;
-                    break;
+            for (const auto &pr : bucket) {
+                if (pr.second == IDq) {
+                    candidates.push_back(pr.first);
+                    if (++examined > hardCap) break;
                 }
-            found++;
+            }
+            if (examined > hardCap) break;
         }
 
-        // Normalize metrics by N if we found any neighbors
-        if (N > 0)
-        {
-            AFq /= N;
-            recallq /= N;
+        // 2️⃣ Deduplicate
+        std::sort(candidates.begin(), candidates.end());
+        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+        // 3️⃣ Distance check
+        std::vector<std::pair<double,int>> distApprox;
+        std::vector<int> rlist;
+        distApprox.reserve(candidates.size());
+
+        for (int id : candidates) {
+            double d = l2(q, data_.vectors[id].values);
+            distApprox.emplace_back(d,id);
+            if (args.rangeSearch && d <= args.R) rlist.push_back(id);
         }
 
-        // Add to running totals
-        totalAF += AFq;
-        totalRecall += recallq;
-
-        // --- Format and write results for this query ---
-        out << "Query: " << qi << "\n";
-        out << std::fixed << std::setprecision(6);
-        for (int ni = 0; ni < N; ++ni)
-        {
-            out << "Nearest neighbor-" << (ni + 1) << ": " << distApprox[ni].second << "\n";
-            out << "distanceApproximate: " << distApprox[ni].first << "\n";
-            out << "distanceTrue: " << distTrue[ni].first << "\n";
+        // 4️⃣ Keep top N
+        int N = std::min(args.N, (int)distApprox.size());
+        if (N>0){
+            std::nth_element(distApprox.begin(), distApprox.begin()+N, distApprox.end());
+            std::sort(distApprox.begin(), distApprox.begin()+N);
         }
-        out << "\nR-near neighbors:\n";
-        for (int id : rlist)
-            out << id << "\n";
-        out << "\n";
+        double tApprox = duration<double>(high_resolution_clock::now()-t0).count();
+        totalApprox += tApprox;
+
+        // 5️⃣ True NN for evaluation
+        auto t2 = high_resolution_clock::now();
+        std::vector<std::pair<double,int>> distTrue;
+        distTrue.reserve(data_.vectors.size());
+        for (auto &v : data_.vectors)
+            distTrue.emplace_back(l2(q, v.values), v.id);
+        std::nth_element(distTrue.begin(), distTrue.begin()+N, distTrue.end());
+        std::sort(distTrue.begin(), distTrue.begin()+N);
+        double tTrue = duration<double>(high_resolution_clock::now()-t2).count();
+        totalTrue += tTrue;
+
+        // 6️⃣ Metrics
+        double AFq=0, recallq=0;
+        for (int i=0;i<N;++i){
+            double da=distApprox[i].first, dt=distTrue[i].first;
+            AFq+=(dt>0?da/dt:1.0);
+            int aid=distApprox[i].second;
+            for (int j=0;j<N;++j)
+                if(aid==distTrue[j].second){recallq+=1;break;}
+        }
+        if (N>0){AFq/=N;recallq/=N;}
+        totalAF+=AFq;totalRecall+=recallq;
+
+        // 7️⃣ Output
+        out<<"Query: "<<qi<<"\n"<<std::fixed<<std::setprecision(6);
+        for(int i=0;i<N;++i){
+            out<<"Nearest neighbor-"<<(i+1)<<": "<<distApprox[i].second<<"\n";
+            out<<"distanceApproximate: "<<distApprox[i].first<<"\n";
+            out<<"distanceTrue: "<<distTrue[i].first<<"\n";
+        }
+        out<<"\nR-near neighbors:\n";
+        for(int id:rlist) out<<id<<"\n";
+        out<<"\n";
     }
 
-    // --- Calculate and output final summary statistics ---
-    double avgAF = totalAF / queryCount;
-    double avgRecall = totalRecall / queryCount;
-    double avgApprox = totalApproxTime / queryCount;
-    double avgTrue = totalTrueTime / queryCount;
-    double qps = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
-
-    // Write summary statistics
-    out << "---- Summary (averages over queries) ----\n";
-    out << "Average AF: " << avgAF << "\n";              // Approximation quality
-    out << "Recall@N: " << avgRecall << "\n";            // Proportion of true neighbors found
-    out << "QPS: " << qps << "\n";                       // Search throughput
-    out << "tApproximateAverage: " << avgApprox << "\n"; // Average LSH search time
-    out << "tTrueAverage: " << avgTrue << "\n";          // Average exact search time
+    // 8️⃣ Summary
+    out<<"---- Summary (averages over queries) ----\n";
+    out<<"Average AF: "<<(totalAF/qCount)<<"\n";
+    out<<"Recall@N: "<<(totalRecall/qCount)<<"\n";
+    out<<"QPS: "<<(1.0/(totalApprox/qCount))<<"\n";
+    out<<"tApproximateAverage: "<<(totalApprox/qCount)<<"\n";
+    out<<"tTrueAverage: "<<(totalTrue/qCount)<<"\n";
 }

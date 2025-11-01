@@ -21,7 +21,7 @@ public:
 
 // Helper: read 32-bit big-endian integer
 inline uint32_t readBigEndian(std::ifstream &f)
-{ 
+{
     unsigned char bytes[4];
     f.read((char *)bytes, 4);
     return (uint32_t(bytes[0]) << 24) | (uint32_t(bytes[1]) << 16) |
@@ -77,7 +77,6 @@ inline void Dataset::load(const std::string &path, const std::string &type)
         count = static_cast<int>(n);
         vectors.resize(count);
 
-        // Rewind to start
         f.seekg(0, std::ios::beg);
 
         for (size_t i = 0; i < n; ++i)
@@ -90,9 +89,12 @@ inline void Dataset::load(const std::string &path, const std::string &type)
             vectors[i].id = static_cast<int>(i);
             vectors[i].values.resize(dim);
             f.read((char *)vectors[i].values.data(), dim * sizeof(float));
+
+            // Optional: rescale SIFT descriptors to make Euclidean LSH bins meaningful
+            for (auto &x : vectors[i].values)
+                x *= 100.0f; // scale factor; adjust if needed
         }
     }
-
     else
     {
         throw std::runtime_error("Unsupported file format or type: " + type);

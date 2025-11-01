@@ -18,212 +18,215 @@ double IVFFlat::l2(const std::vector<float> &a, const std::vector<float> &b)
 
 void IVFFlat::kmeans(const std::vector<std::vector<float>> &P, int k, int iters, unsigned seed)
 {
-    int N = P.size(), D = P[0].size();
+    int N = (int)P.size(), D = (int)P[0].size();
     std::mt19937_64 rng(seed);
     std::uniform_int_distribution<int> uni(0, N - 1);
 
-    centroids_.assign(k, std::vector<float>(D, 0));
-    std::vector<int> init;
-    init.reserve(k);
-    for (int i = 0; i < k; ++i)
-    {
+    // --- init: distinct random centers (simple Lloyd’s) ---
+    centroids_.assign(k, std::vector<float>(D, 0.0f));
+    std::vector<int> init; init.reserve(k);
+    while ((int)init.size() < k) {
         int id = uni(rng);
-        while (std::find(init.begin(), init.end(), id) != init.end())
-            id = uni(rng);
-        init.push_back(id);
-        centroids_[i] = P[id];
+        if (std::find(init.begin(), init.end(), id) == init.end()) {
+            init.push_back(id);
+            centroids_[(int)init.size()-1] = P[id];
+        }
     }
 
     std::vector<int> assign(N, -1), cnt(k, 0);
+
     for (int it = 0; it < iters; ++it)
     {
-        bool ch = false;
-        for (int i = 0; i < N; ++i)
-        {
-            int best = -1;
-            double bd = std::numeric_limits<double>::infinity();
-            for (int c = 0; c < k; ++c)
-            {
+        bool changed = false;
+
+        // Assignment
+        for (int i = 0; i < N; ++i) {
+            int best = -1; double bd = std::numeric_limits<double>::infinity();
+            for (int c = 0; c < k; ++c) {
                 double d = l2(P[i], centroids_[c]);
-                if (d < bd)
-                {
-                    bd = d;
-                    best = c;
-                }
+                if (d < bd) { bd = d; best = c; }
             }
-            if (assign[i] != best)
-            {
-                assign[i] = best;
-                ch = true;
-            }
+            if (assign[i] != best) { assign[i] = best; changed = true; }
         }
-        if (!ch)
-            break;
-        for (int c = 0; c < k; ++c)
-        {
-            std::fill(centroids_[c].begin(), centroids_[c].end(), 0);
+        if (!changed) break;
+
+        // Update
+        for (int c = 0; c < k; ++c) {
+            std::fill(centroids_[c].begin(), centroids_[c].end(), 0.0f);
             cnt[c] = 0;
         }
-        for (int i = 0; i < N; ++i)
-        {
+        for (int i = 0; i < N; ++i) {
             int c = assign[i];
             ++cnt[c];
-            for (int d = 0; d < D; ++d)
-                centroids_[c][d] += P[i][d];
+            for (int d = 0; d < D; ++d) centroids_[c][d] += P[i][d];
         }
-        for (int c = 0; c < k; ++c)
-        {
-            if (cnt[c])
-                for (int d = 0; d < D; ++d)
-                    centroids_[c][d] /= (float)cnt[c];
-            else
-                centroids_[c] = P[uni(rng)];
+        for (int c = 0; c < k; ++c) {
+            if (cnt[c]) for (int d = 0; d < D; ++d) centroids_[c][d] /= (float)cnt[c];
+            else centroids_[c] = P[uni(rng)]; // re-seed empty cluster
         }
     }
-
-    lists_.assign(k, {});
-    for (int i = 0; i < N; ++i)
-        lists_[assign[i]].push_back(i);
 }
 
 void IVFFlat::buildIndex(const Dataset &data)
 {
     data_ = data;
     dim_ = data.dimension;
-    k_ = args.kclusters;
-    nprobe_ = args.nprobe;
+    k_ = args.kclusters;          // number of coarse cells
+    nprobe_ = args.nprobe;        // #cells to probe at query
 
-    std::vector<std::vector<float>> P;
-    P.reserve(data_.vectors.size());
-    for (auto &v : data_.vectors)
-        P.push_back(v.values);
+    const int N = (int)data_.vectors.size();
+    if (N == 0 || k_ <= 0) { centroids_.clear(); lists_.clear(); return; }
 
-    kmeans(P, k_, 25, (unsigned)args.seed);
+    // --- 1) Make a √n training subset X' for centroids (slides) ---
+    int trainN = std::max(k_, (int)std::sqrt((double)N));
+    std::mt19937_64 rng(args.seed);
+    std::vector<int> idx(N); std::iota(idx.begin(), idx.end(), 0);
+    std::shuffle(idx.begin(), idx.end(), rng);
+    idx.resize(trainN);
+
+    std::vector<std::vector<float>> Ptrain;
+    Ptrain.reserve(trainN);
+    for (int id : idx) Ptrain.push_back(data_.vectors[id].values);
+
+    // --- 2) Learn centroids on X' using Lloyd’s ---
+    kmeans(Ptrain, k_, /*iters*/25, (unsigned)args.seed);
+
+    // --- 3) Build inverted lists by assigning ALL points to their nearest centroid ---
+    lists_.assign(k_, {});
+    for (int i = 0; i < N; ++i) {
+        const auto &x = data_.vectors[i].values;
+        int best = 0;
+        double bd = l2(x, centroids_[0]);
+        for (int c = 1; c < k_; ++c) {
+            double d = l2(x, centroids_[c]);
+            if (d < bd) { bd = d; best = c; }
+        }
+        lists_[best].push_back(i);
+    }
 }
+
 
 void IVFFlat::search(const Dataset &queries, std::ofstream &out)
 {
     using namespace std::chrono;
-    out << "IVFFlat\n";
+    out << "IVFFlat\n\n";
 
-    double R = args.R;
-    bool doRange = args.rangeSearch;
+    const bool doRange = args.rangeSearch;
+    const double Rrad = args.R;           // only for optional radius results
+    const int Nret = std::max(1, args.N); // how many neighbors to return
 
-    double totalAF = 0.0, totalRecall = 0.0;
-    double totalApproxTime = 0.0, totalTrueTime = 0.0;
-    int queryCount = 0;
-
-    auto startAll = high_resolution_clock::now();
+    double totalAF=0.0, totalRecall=0.0, totalApprox=0.0, totalTrue=0.0;
+    int counted=0;
 
     for (int qi = 0; qi < (int)queries.vectors.size(); ++qi)
     {
         const auto &q = queries.vectors[qi].values;
-        auto startApprox = high_resolution_clock::now();
 
-        // nearest centroids
-        std::vector<std::pair<double, int>> cds;
-        cds.reserve(k_);
-        for (int c = 0; c < k_; ++c)
-            cds.emplace_back(l2(q, centroids_[c]), c);
-        std::sort(cds.begin(), cds.end());
+        // --- Approximate phase: coarse search + candidate scan ---
+        auto t0 = high_resolution_clock::now();
+
+        // 1) Score all centroids; pick top nprobe_
+        std::vector<std::pair<double,int>> cds; cds.reserve(k_);
+        for (int c = 0; c < k_; ++c) cds.emplace_back(l2(q, centroids_[c]), c);
+        std::nth_element(cds.begin(),
+                         cds.begin() + std::min(nprobe_, (int)cds.size()),
+                         cds.end());
+        std::sort(cds.begin(), cds.begin() + std::min(nprobe_, (int)cds.size()));
         int use = std::min(nprobe_, (int)cds.size());
 
-        // candidates
+        // 2) Merge candidates from the selected inverted lists
         std::vector<int> cand;
-        for (int i = 0; i < use; ++i)
-        {
+        size_t totalIn = 0;
+        for (int i = 0; i < use; ++i) totalIn += lists_[cds[i].second].size();
+        cand.reserve(totalIn);
+        for (int i = 0; i < use; ++i) {
             int cid = cds[i].second;
-            cand.insert(cand.end(), lists_[cid].begin(), lists_[cid].end());
+            const auto &L = lists_[cid];
+            cand.insert(cand.end(), L.begin(), L.end());
         }
 
-        int idA = -1;
-        double bestA = std::numeric_limits<double>::infinity();
+        // 3) Compute distances only for U = ⋃ selected lists
+        std::vector<std::pair<double,int>> distApprox;
+        distApprox.reserve(cand.size());
         std::vector<int> rlist;
-
-        if (!cand.empty())
-        {
-            for (int id : cand)
-            {
-                double d = l2(q, data_.vectors[id].values);
-                if (doRange && d <= R)
-                    rlist.push_back(id);
-                if (d < bestA)
-                {
-                    bestA = d;
-                    idA = id;
-                }
-            }
-        }
-
-        auto endApprox = high_resolution_clock::now();
-        double tApprox = duration<double>(endApprox - startApprox).count();
-
-        // compute true nearest
-        auto startTrue = high_resolution_clock::now();
-        int idT = -1;
-        double bestT = std::numeric_limits<double>::infinity();
-        for (int id = 0; id < (int)data_.vectors.size(); ++id)
-        {
+        for (int id : cand) {
             double d = l2(q, data_.vectors[id].values);
-            if (d < bestT)
-            {
-                bestT = d;
-                idT = id;
+            distApprox.emplace_back(d, id);
+            if (doRange && d <= Rrad) rlist.push_back(id);
+        }
+
+        // 4) Keep top-Nret approximate
+        int keepA = std::min(Nret, (int)distApprox.size());
+        if (keepA > 0) {
+            std::nth_element(distApprox.begin(), distApprox.begin()+keepA, distApprox.end());
+            std::sort(distApprox.begin(), distApprox.begin()+keepA);
+            distApprox.resize(keepA);
+        }
+
+        double tApprox = duration<double>(high_resolution_clock::now() - t0).count();
+        totalApprox += tApprox;
+
+        // --- True phase: compute exact top-Nret over full DB for metrics ---
+        auto t2 = high_resolution_clock::now();
+        std::vector<std::pair<double,int>> distTrue;
+        distTrue.reserve(data_.vectors.size());
+        for (const auto &v : data_.vectors)
+            distTrue.emplace_back(l2(q, v.values), v.id);
+        int keepT = std::min(Nret, (int)distTrue.size());
+        if (keepT > 0) {
+            std::nth_element(distTrue.begin(), distTrue.begin()+keepT, distTrue.end());
+            std::sort(distTrue.begin(), distTrue.begin()+keepT);
+            distTrue.resize(keepT);
+        }
+        double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
+        totalTrue += tTrue;
+
+        // --- Quality metrics (AF, Recall@N) ---
+        double AFq = 0.0, Rq = 0.0;
+        if (keepA > 0 && keepT > 0) {
+            for (int i = 0; i < keepA; ++i) {
+                double da = distApprox[i].first;
+                double dt = distTrue[i].first;
+                AFq += (dt > 0.0 ? da / dt : 1.0);
+                int aid = distApprox[i].second;
+                for (int j = 0; j < keepT; ++j)
+                    if (aid == distTrue[j].second) { Rq += 1.0; break; }
             }
-        }
-        auto endTrue = high_resolution_clock::now();
-        double tTrue = duration<double>(endTrue - startTrue).count();
-
-        totalApproxTime += tApprox;
-        totalTrueTime += tTrue;
-
-        double AF = (bestT > 0.0 && bestA < std::numeric_limits<double>::infinity())
-                        ? bestA / bestT
-                        : std::numeric_limits<double>::infinity();
-        double recall = (idA == idT) ? 1.0 : 0.0;
-
-        if (idA != -1)
-        {
-            totalAF += AF;
-            totalRecall += recall;
-            queryCount++;
+            AFq /= keepA;
+            Rq  /= keepT;
+            totalAF += AFq;
+            totalRecall += Rq;
+            ++counted;
         }
 
+        // --- Output per query (top-N + radius list) ---
         out << "Query: " << qi << "\n";
-        if (idA >= 0)
-        {
-            out << "Nearest neighbor-1: " << idA << "\n"
-                << "distanceApproximate: " << bestA << "\n"
-                << "distanceTrue: " << bestT << "\n";
-        }
-        else
-        {
-            out << "Nearest neighbor-1: -1\n"
-                << "distanceApproximate: inf\n"
-                << "distanceTrue: " << bestT << "\n";
+        out << std::fixed << std::setprecision(6);
+        for (int i = 0; i < keepA; ++i) {
+            out << "Nearest neighbor-" << (i+1) << ": " << distApprox[i].second << "\n";
+            out << "distanceApproximate: " << distApprox[i].first << "\n";
+            out << "distanceTrue: " << distTrue[std::min(i, keepT-1)].first << "\n";
         }
         out << "R-near neighbors:\n";
-        for (int id : rlist)
-            out << id << "\n";
+        for (int id : rlist) out << id << "\n";
         out << "\n";
     }
 
-    auto endAll = high_resolution_clock::now();
-    double totalTime = duration<double>(endAll - startAll).count();
-
-    double avgAF = (queryCount > 0) ? totalAF / queryCount : 0.0;
-    double avgRecall = (queryCount > 0) ? totalRecall / queryCount : 0.0;
-    double qps = (totalTime > 0) ? queryCount / totalTime : 0.0;
-    double avgApprox = (queryCount > 0) ? totalApproxTime / queryCount : 0.0;
-    double avgTrue = (queryCount > 0) ? totalTrueTime / queryCount : 0.0;
-
+    // --- Summary (averages over processed queries) ---
     out << std::fixed << std::setprecision(6);
+    double avgAF     = (counted > 0) ? totalAF     / counted : 0.0;
+    double avgRecall = (counted > 0) ? totalRecall / counted : 0.0;
+    double avgApprox = (counted > 0) ? totalApprox / counted : 0.0;
+    double avgTrue   = (counted > 0) ? totalTrue   / counted : 0.0;
+    double qps       = (avgApprox > 0.0) ? 1.0 / avgApprox : 0.0;
+
     out << "Average AF: " << avgAF << "\n";
     out << "Recall@N: " << avgRecall << "\n";
     out << "QPS: " << qps << "\n";
     out << "tApproximateAverage: " << avgApprox << "\n";
     out << "tTrueAverage: " << avgTrue << "\n";
 }
+
 
 // --- Overall silhouette score (as before) ---
 double IVFFlat::silhouetteScore() const

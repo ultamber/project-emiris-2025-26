@@ -158,37 +158,69 @@ void IVFPQ::encodeAll(const std::vector<std::vector<float>> &R)
 void IVFPQ::buildIndex(const Dataset &data)
 {
     data_ = data;
-    dim_ = data.dimension;
-    k_ = args.kclusters;
-    nprobe_ = args.nprobe;
-    M_ = args.Msubvectors;
-    Ks_ = 1 << args.nbits;
+    dim_  = data.dimension;
 
-    std::vector<std::vector<float>> P;
-    P.reserve(data_.vectors.size());
-    for (auto &v : data_.vectors)
-        P.push_back(v.values);
+    k_       = args.kclusters;     // #coarse centroids (IVF)
+    nprobe_  = args.nprobe;        // how many inverted lists to scan at query
+    M_       = args.Msubvectors;   // #subquantizers
+    Ks_      = 1 << args.nbits;    // codebook size per subquantizer
 
-    std::vector<int> assign;
-    kmeans(P, k_, 50, (unsigned)args.seed, centroids_, &assign);
+    const int N = (int)data_.vectors.size();
+    if (N == 0) {
+        centroids_.clear();
+        lists_.clear();
+        return;
+    }
+
+    // --- 1) build coarse quantizer on a subset X' ~ sqrt(n) (slide) ---
+    int trainN = std::max(k_, (int)std::sqrt((double)N));
+    std::mt19937_64 rng(args.seed);
+    std::vector<int> idx(N); std::iota(idx.begin(), idx.end(), 0);
+    std::shuffle(idx.begin(), idx.end(), rng);
+    idx.resize(trainN);
+
+    std::vector<std::vector<float>> Ptrain;
+    Ptrain.reserve(trainN);
+    for (int id : idx) Ptrain.push_back(data_.vectors[id].values);
+
+    std::vector<int> coarseAssign;  // assignment of Ptrain (we don't really need it)
+    kmeans(Ptrain, k_, 40, (unsigned)args.seed, centroids_, nullptr);
+
+    // --- 2) assign ALL points to inverted lists (IVF build) ---
     lists_.assign(k_, {});
-    for (int i = 0; i < (int)assign.size(); ++i)
-        lists_[assign[i]].push_back(i);
+    std::vector<int> fullAssign(N, -1);
+    for (int i = 0; i < N; ++i) {
+        const auto &x = data_.vectors[i].values;
+        int best = 0;
+        double bd = l2(x, centroids_[0]);
+        for (int c = 1; c < k_; ++c) {
+            double d = l2(x, centroids_[c]);
+            if (d < bd) { bd = d; best = c; }
+        }
+        lists_[best].push_back(i);
+        fullAssign[i] = best;
+    }
 
+    // --- 3) residuals r(x) = x - c(x) for ALL x ---
     std::vector<std::vector<float>> R;
-    makeResiduals(data_, assign, R);
+    makeResiduals(data_, fullAssign, R);
+
+    // --- 4) train product quantizer on residuals (slide steps 4–7) ---
     trainPQ(R);
+
+    // --- 5) encode ALL residuals with trained PQ ---
     encodeAll(R);
 }
+
 
 void IVFPQ::search(const Dataset& queries, std::ofstream& out) {
     using namespace std::chrono;
     out << "IVFPQ\n\n";
 
-    const double Rrad = args.R;
-    const bool doRange = args.rangeSearch;
-    const int N = args.N;
-    const int rerankT = 100;  // re-rank top-T candidates for accuracy
+    const double Rrad   = args.R;
+    const bool   doRange = args.rangeSearch;
+    const int    Nret    = std::max(1, args.N);
+    const int    rerankT = 100;   // top T to re-rank exactly
 
     double totalAF = 0.0, totalRecall = 0.0;
     double totalApproxTime = 0.0, totalTrueTime = 0.0;
@@ -197,10 +229,10 @@ void IVFPQ::search(const Dataset& queries, std::ofstream& out) {
     for (int qi = 0; qi < Q; ++qi) {
         const auto& q = queries.vectors[qi].values;
 
-        // --- Approximate search ---
+        // --- Approximate (IVF + PQ-ADC) ---
         auto t0 = high_resolution_clock::now();
 
-        //Find nprobe nearest centroids
+        // 1) score all coarse centroids
         std::vector<std::pair<double,int>> cds;
         cds.reserve(k_);
         for (int c = 0; c < k_; ++c) {
@@ -209,82 +241,85 @@ void IVFPQ::search(const Dataset& queries, std::ofstream& out) {
                 double diff = q[d] - centroids_[c][d];
                 s += diff * diff;
             }
-            cds.emplace_back(s, c);  // squared distance
+            cds.emplace_back(s, c);   // squared distance is fine
         }
         std::sort(cds.begin(), cds.end());
         const int use = std::min(nprobe_, (int)cds.size());
 
-        std::vector<std::pair<double,int>> distApprox;
+        std::vector<std::pair<double,int>> approx; // (adc_dist_sqr, id)
         std::vector<int> rlist;
 
-        //For each chosen centroid, compute ADC distances
         for (int pi = 0; pi < use; ++pi) {
             int cid = cds[pi].second;
 
-            // query residual
+            // query residual: q - c(cid)
             std::vector<float> rq(dim_);
             for (int d = 0; d < dim_; ++d)
                 rq[d] = q[d] - centroids_[cid][d];
 
-            // lookup tables (squared distances per subquantizer)
+            // build LUTs for this residual
             std::vector<std::vector<double>> LUT(M_, std::vector<double>(Ks_, 0.0));
             int off = 0;
             for (int m = 0; m < M_; ++m) {
                 int sd = subdim_[m];
                 for (int k = 0; k < Ks_; ++k) {
-                    double s = 0;
+                    double s = 0.0;
                     for (int d = 0; d < sd; ++d) {
                         double diff = rq[off + d] - codebooks_[m][k][d];
                         s += diff * diff;
                     }
-                    LUT[m][k] = s;
+                    LUT[m][k] = s;     // store squared distance
                 }
                 off += sd;
             }
 
-            // scan candidates in this list
+            // scan candidates in this inverted list
             for (int id : lists_[cid]) {
-                double da_sqr = 0.0;
+                double adc_sqr = 0.0;
                 for (int m = 0; m < M_; ++m)
-                    da_sqr += LUT[m][codes_[id][m]];
-                double da = std::sqrt(da_sqr);  // convert to Euclidean
-                distApprox.emplace_back(da, id);
-                if (doRange && da <= Rrad)
-                    rlist.push_back(id);
+                    adc_sqr += LUT[m][ codes_[id][m] ];
+                approx.emplace_back(adc_sqr, id);
+
+                // range in PQ space (optional)
+                if (doRange) {
+                    double adc = std::sqrt(adc_sqr);
+                    if (adc <= Rrad) rlist.push_back(id);
+                }
             }
         }
 
-        // Keep top-N (or top-T if re-ranking enabled)
-        if (!distApprox.empty()) {
-            int T = std::max(N, rerankT);
-            T = std::min(T, (int)distApprox.size());
-            std::nth_element(distApprox.begin(), distApprox.begin() + T, distApprox.end());
-            std::sort(distApprox.begin(), distApprox.begin() + T);
-            distApprox.resize(T);
+        // 2) keep top-T (we'll re-rank T exactly)
+        if (!approx.empty()) {
+            int T = std::max(Nret, rerankT);
+            T = std::min(T, (int)approx.size());
+            std::nth_element(approx.begin(), approx.begin()+T, approx.end());
+            std::sort(approx.begin(), approx.begin()+T);
+            approx.resize(T);
         }
 
-        // ---  exact re-ranking (for better AF/recall)
-        for (auto &p : distApprox)
+        // 3) exact re-ranking on original vectors
+        for (auto &p : approx)
             p.first = l2(q, data_.vectors[p.second].values);
-        if (!distApprox.empty()) {
-            std::nth_element(distApprox.begin(), distApprox.begin() + N, distApprox.end());
-            std::sort(distApprox.begin(), distApprox.begin() + N);
-            distApprox.resize(N);
+        if (!approx.empty()) {
+            int keep = std::min(Nret, (int)approx.size());
+            std::nth_element(approx.begin(), approx.begin()+keep, approx.end());
+            std::sort(approx.begin(), approx.begin()+keep);
+            approx.resize(keep);
         }
 
         auto t1 = high_resolution_clock::now();
         double tApprox = duration<double>(t1 - t0).count();
         totalApproxTime += tApprox;
 
-        // --- True exhaustive search ---
+        // --- True exact search for metrics ---
         auto t2 = high_resolution_clock::now();
         std::vector<std::pair<double,int>> distTrue;
         distTrue.reserve(data_.vectors.size());
         for (const auto& v : data_.vectors)
             distTrue.emplace_back(l2(q, v.values), v.id);
-        int topN = std::min(N, (int)distTrue.size());
-        std::nth_element(distTrue.begin(), distTrue.begin() + topN, distTrue.end());
-        std::sort(distTrue.begin(), distTrue.begin() + topN);
+        int topN = std::min(Nret, (int)distTrue.size());
+        std::nth_element(distTrue.begin(), distTrue.begin()+topN, distTrue.end());
+        std::sort(distTrue.begin(), distTrue.begin()+topN);
         distTrue.resize(topN);
         auto t3 = high_resolution_clock::now();
         double tTrue = duration<double>(t3 - t2).count();
@@ -292,49 +327,44 @@ void IVFPQ::search(const Dataset& queries, std::ofstream& out) {
 
         // --- Metrics ---
         double AFq = 1.0, recallq = 0.0;
-        if (!distApprox.empty() && !distTrue.empty()) {
-            double da = distApprox[0].first;  // nearest approx
-            double dt = distTrue[0].first;    // true nearest
+        if (!approx.empty() && !distTrue.empty()) {
+            double da = approx[0].first;
+            double dt = distTrue[0].first;
             AFq = (dt > 0.0) ? da / dt : 1.0;
 
-            std::unordered_set<int> trueIds;
-            for (auto &p : distTrue) trueIds.insert(p.second);
+            // recall@N
+            std::unordered_set<int> trueSet;
+            for (auto &p : distTrue) trueSet.insert(p.second);
             int hits = 0;
-            for (auto &p : distApprox)
-                if (trueIds.count(p.second)) ++hits;
-            recallq = double(hits) / N;
+            for (auto &p : approx)
+                if (trueSet.count(p.second)) ++hits;
+            recallq = (double)hits / (double)Nret;
         }
 
-        totalAF += AFq;
+        totalAF     += AFq;
         totalRecall += recallq;
 
-        // --- Output ---
+        // --- Output per query ---
         out << "Query: " << qi << "\n";
         out << std::fixed << std::setprecision(6);
-        for (int ni = 0; ni < (int)distApprox.size(); ++ni) {
-            out << "Nearest neighbor-" << (ni+1) << ": " << distApprox[ni].second << "\n";
-            out << "distanceApproximate: " << distApprox[ni].first << "\n";
-            out << "distanceTrue: " << distTrue[ni].first << "\n";
+        for (int i = 0; i < (int)approx.size(); ++i) {
+            out << "Nearest neighbor-" << (i+1) << ": " << approx[i].second << "\n";
+            out << "distanceApproximate: " << approx[i].first << "\n";
+            out << "distanceTrue: " << distTrue[ std::min(i, (int)distTrue.size()-1) ].first << "\n";
         }
         if (doRange && !rlist.empty()) {
-            out << "\nR-near neighbors:\n";
+            out << "R-near neighbors:\n";
             for (int id : rlist) out << id << "\n";
         }
         out << "\n";
     }
 
     // --- Summary ---
-    double avgAF = totalAF / Q;
-    double avgRecall = totalRecall / Q;
-    double avgApprox = totalApproxTime / Q;
-    double avgTrue = totalTrueTime / Q;
-    double qps = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
-
     out << "---- Summary (averages over queries) ----\n";
-    out << std::fixed << std::setprecision(6)
-        << "Average AF: " << avgAF << "\n"
-        << "Recall@N: " << avgRecall << "\n"
-        << "QPS: " << qps << "\n"
-        << "tApproximateAverage: " << avgApprox << "\n"
-        << "tTrueAverage: " << avgTrue << "\n";
+    out << std::fixed << std::setprecision(6);
+    out << "Average AF: " << (totalAF / Q) << "\n";
+    out << "Recall@N: " << (totalRecall / Q) << "\n";
+    out << "QPS: " << ((totalApproxTime/Q) > 0 ? 1.0 / (totalApproxTime / Q) : 0.0) << "\n";
+    out << "tApproximateAverage: " << (totalApproxTime / Q) << "\n";
+    out << "tTrueAverage: " << (totalTrueTime / Q) << "\n";
 }

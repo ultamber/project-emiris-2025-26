@@ -29,6 +29,7 @@ struct Arguments {
     int kproj = 8;
     int M = 200;
     int probes = 1000;
+    int maxHamming = 0;
 
     // IVF / IVFPQ
     int kclusters = 64;
