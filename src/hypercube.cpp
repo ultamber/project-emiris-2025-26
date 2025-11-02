@@ -44,8 +44,8 @@ void Hypercube::buildIndex(const Dataset &data)
 
     // Random number generators
     std::mt19937_64 rng(args.seed);
-    std::normal_distribution<double> normal(0.0, 1.0);              // For LSH projections
-    std::uniform_real_distribution<float> unif(0.0f, w_);           // For LSH shifts
+    std::normal_distribution<double> normal(0.0, 1.0);    // For LSH projections
+    std::uniform_real_distribution<float> unif(0.0f, w_); // For LSH shifts
     std::uniform_int_distribution<uint32_t> uni32(1u, 0xffffffffu); // For f_j hash functions
 
     // Slide 24: Generate d' base LSH functions h_j
@@ -148,8 +148,8 @@ std::uint64_t Hypercube::vertexOf(const std::vector<float> &v) const
     std::uint64_t key = 0;
     for (int j = 0; j < kproj_; ++j)
     {
-        long long hj = hij(v, j); // Compute LSH hash
-        if (fj(hj, j))            // Map to bit using f_j
+        long long hj = hij(v, j);    // Compute LSH hash
+        if (fj(hj, j))               // Map to bit using f_j
             key |= (1ULL << j);
     }
     return key;
@@ -172,14 +172,14 @@ Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHammi
 
     // Slide 25: Threshold on Hamming distance
     const int Hmax = std::min(kproj, maxHamming);
-
+    
     // Generate vertices at increasing Hamming distances: 1, 2, ...
     for (int h = 1; h <= Hmax && (int)out.size() < maxProbes; ++h)
     {
         // Generate all combinations of h bit flips
         std::vector<int> idx(h);
         std::iota(idx.begin(), idx.end(), 0);
-
+        
         while (true)
         {
             // Flip bits at positions in idx
@@ -187,10 +187,10 @@ Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHammi
             for (int i : idx)
                 mask |= (1ULL << i);
             out.push_back(base ^ mask);
-
+            
             if ((int)out.size() >= maxProbes)
                 break;
-
+            
             // Next combination in lexicographic order
             int i;
             for (i = h - 1; i >= 0 && idx[i] == i + kproj - h; --i)
@@ -210,15 +210,14 @@ Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHammi
  * @param queries Query dataset
  * @param out Output file stream for results
  */
-void Hypercube::search(const Dataset &queries, std::ofstream &out,
-                       const GroundTruth *groundTruth)
+void Hypercube::search(const Dataset &queries, std::ofstream &out)
 {
     using namespace std::chrono;
     out << "Hypercube\n\n";
 
     // Slide 25: Search parameters
-    int M = args.M;                                                // Threshold: max candidates to check in R^d
-    int probes = args.probes;                                      // Threshold: max vertices to probe
+    int M = args.M;           // Threshold: max candidates to check in R^d
+    int probes = args.probes; // Threshold: max vertices to probe
     int maxHam = (args.maxHamming > 0) ? args.maxHamming : kproj_; // Hamming distance bound
     double R = args.R;
     bool doRange = args.rangeSearch;
@@ -226,7 +225,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
 
     double totalAF = 0, totalRecall = 0, totalApprox = 0, totalTrue = 0;
     int Q = (int)queries.vectors.size();
-
+    
     if (args.maxQueries > 0)
         Q = std::min(Q, static_cast<int>(args.maxQueries));
 
@@ -237,16 +236,16 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
 
         // Slide 24, Step 1: Project query to hypercube vertex
         std::uint64_t base = vertexOf(q);
-
+        
         // Slide 24, Step 2: Check points in same and nearby vertices
         // Generate vertices in increasing Hamming distance
         auto plist = probesList(base, kproj_, probes, maxHam);
-
+        
         // Collect unique candidates from probed vertices
         std::unordered_set<int> candSet;
         candSet.reserve(std::min<size_t>((size_t)M, (size_t)4096));
         size_t gathered = 0;
-
+        
         for (auto vtx : plist)
         {
             const std::vector<int> *bucket = nullptr;
@@ -261,7 +260,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
                     continue;
                 bucket = &it->second;
             }
-
+            
             // Add points from this vertex
             for (int id : *bucket)
             {
@@ -276,7 +275,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
         std::vector<std::pair<double, int>> distApprox;
         distApprox.reserve(candSet.size());
         std::vector<int> rlist;
-
+        
         for (int id : candSet)
         {
             double d = l2(q, data_.vectors[id].values);
@@ -293,34 +292,24 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
             std::sort(distApprox.begin(), distApprox.begin() + topN);
             distApprox.resize(topN);
         }
-
+        
         double tApprox = duration<double>(high_resolution_clock::now() - t0).count();
         totalApprox += tApprox;
 
         // Ground truth for evaluation
         auto t2 = high_resolution_clock::now();
         std::vector<std::pair<double, int>> distTrue;
-        if (groundTruth)
+        distTrue.reserve(data_.vectors.size());
+        for (auto &v : data_.vectors)
+            distTrue.emplace_back(l2(q, v.values), v.id);
+        if (topN > 0)
         {
-            // Use cached ground truth
-            distTrue = groundTruth->trueNeighbors[qi];
-            totalTrue += groundTruth->avgTrueTime;
+            std::nth_element(distTrue.begin(), distTrue.begin() + topN, distTrue.end());
+            std::sort(distTrue.begin(), distTrue.begin() + topN);
+            distTrue.resize(topN);
         }
-        else
-        {
-
-            distTrue.reserve(data_.vectors.size());
-            for (auto &v : data_.vectors)
-                distTrue.emplace_back(l2(q, v.values), v.id);
-            if (topN > 0)
-            {
-                std::nth_element(distTrue.begin(), distTrue.begin() + topN, distTrue.end());
-                std::sort(distTrue.begin(), distTrue.begin() + topN);
-                distTrue.resize(topN);
-            }
-            double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
-            totalTrue += tTrue;
-        }
+        double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
+        totalTrue += tTrue;
 
         // Metrics
         double AFq = 0, recallq = 0;
@@ -363,7 +352,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out,
     double avgAF = totalAF / Q, avgRecall = totalRecall / Q;
     double avgApprox = totalApprox / Q, avgTrue = totalTrue / Q;
     double qps = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
-
+    
     out << "---- Summary (averages over queries) ----\n";
     out << "Average AF: " << avgAF << "\n";
     out << "Recall@N: " << avgRecall << "\n";

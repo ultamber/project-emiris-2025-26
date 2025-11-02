@@ -113,48 +113,48 @@ int main(int argc, char *argv[])
     }
 
     // === Compute or load ground truth ===
-    GroundTruth groundTruth;
-    GroundTruth *gtPtr = nullptr;  // Will point to ground truth if available
+    // GroundTruth groundTruth;
+    // GroundTruth *gtPtr = nullptr;  // Will point to ground truth if available
     
-    if (!args.useBruteForce)  // Only compute/load if NOT running bruteforce
-    {
-        std::string gtCacheFile = "groundtruth_" + args.type + "_N" + std::to_string(args.N) + ".bin";
+    // if (!args.useBruteForce)  // Only compute/load if NOT running bruteforce
+    // {
+    //     std::string gtCacheFile = "groundtruth_" + args.type + "_N" + std::to_string(args.N) + ".bin";
 
-        if (groundTruth.load(gtCacheFile))
-        {
-            std::cout << "Loaded cached ground truth from " << gtCacheFile << "\n";
-            gtPtr = &groundTruth;  // Cache available
-        }
-        else
-        {
-            std::cout << "Computing ground truth (this may take a while)...\n";
-            auto t0 = std::chrono::high_resolution_clock::now();
+    //     if (groundTruth.load(gtCacheFile))
+    //     {
+    //         std::cout << "Loaded cached ground truth from " << gtCacheFile << "\n";
+    //         gtPtr = &groundTruth;  // Cache available
+    //     }
+    //     else
+    //     {
+    //         std::cout << "Computing ground truth (this may take a while)...\n";
+    //         auto t0 = std::chrono::high_resolution_clock::now();
 
-            groundTruth.compute(data, queries, args.N);
+    //         groundTruth.compute(data, queries, args.N);
 
-            auto t1 = std::chrono::high_resolution_clock::now();
-            double elapsed = std::chrono::duration<double>(t1 - t0).count();
+    //         auto t1 = std::chrono::high_resolution_clock::now();
+    //         double elapsed = std::chrono::duration<double>(t1 - t0).count();
 
-            std::cout << "Ground truth computed in " << elapsed << " seconds\n";
-            std::cout << "Average time per query: " << groundTruth.avgTrueTime << " seconds\n";
+    //         std::cout << "Ground truth computed in " << elapsed << " seconds\n";
+    //         std::cout << "Average time per query: " << groundTruth.avgTrueTime << " seconds\n";
 
-            groundTruth.save(gtCacheFile);
-            std::cout << "Cached ground truth saved to " << gtCacheFile << "\n";
+    //         groundTruth.save(gtCacheFile);
+    //         std::cout << "Cached ground truth saved to " << gtCacheFile << "\n";
             
-            gtPtr = &groundTruth;  // Cache now available
-        }
-    }
+    //         gtPtr = &groundTruth;  // Cache now available
+    //     }
+    // }
     if (args.useLSH)
     {
         LSH alg(args);
         alg.buildIndex(data);
-        alg.search(queries, out, gtPtr);
+        alg.search(queries, out, nullptr);
     }
     else if (args.useHypercube)
     {
         Hypercube alg(args);
         alg.buildIndex(data);
-        alg.search(queries, out, gtPtr);
+        alg.search(queries, out, nullptr);
     }
     else if (args.useIVFFlat)
     {
@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
         // for (size_t i = 0; i < perCluster.size(); ++i)
         //     std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
         // std::cout << "=============================\n";
-        alg.search(queries, out, gtPtr);
+        alg.search(queries, out, nullptr);
     }
     else if (args.useIVFPQ)
     {
@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
         // for (size_t i = 0; i < perCluster.size(); ++i)
         //     std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
         // std::cout << "=============================\n";
-        alg.search(queries, out, gtPtr);
+        alg.search(queries, out, nullptr);
     }
     else if (args.useBruteForce)
     {

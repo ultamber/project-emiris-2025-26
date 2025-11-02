@@ -153,8 +153,7 @@ std::uint64_t LSH::keyFor(const std::vector<float> &v, int li) const
  * @param queries Query dataset
  * @param out Output file stream for results
  */
-void LSH::search(const Dataset &queries, std::ofstream &out, 
-                 const GroundTruth *groundTruth)
+void LSH::search(const Dataset &queries, std::ofstream &out)
 {
     using namespace std::chrono;
     out << "LSH\n\n";
@@ -175,9 +174,8 @@ void LSH::search(const Dataset &queries, std::ofstream &out,
         std::vector<int> candidates;
         size_t examined = 0;
 
-        // Hard cap on candidates to examine (stop after ~10L to 20L items)
-        // size_t hardCap = args.rangeSearch ? 20 * args.L : 10 * args.L;
-        size_t hardCap = std::max<size_t>(1000, data_.vectors.size() / 10);
+        // Hard cap on candidates to examine (slides 13-14: stop after ~10L to 20L items)
+        size_t hardCap = args.rangeSearch ? 20 * args.L : 10 * args.L;
 
         // Probe all L tables
         for (int li = 0; li < args.L; ++li)
@@ -203,7 +201,7 @@ void LSH::search(const Dataset &queries, std::ofstream &out,
                     }
                     else
                     {
-                        // Neighboring buckets: accept all candidates (multi-probe needs this!)
+                        // Neighboring buckets: accept all candidates 
                         candidates.push_back(pr.first);
                     }
 
@@ -246,26 +244,17 @@ void LSH::search(const Dataset &queries, std::ofstream &out,
 
         double tApprox = duration<double>(high_resolution_clock::now() - t0).count();
         totalApprox += tApprox;
+
+        // Compute true nearest neighbors for evaluation
+        auto t2 = high_resolution_clock::now();
         std::vector<std::pair<double, int>> distTrue;
-
-        if (groundTruth)
-        {
-            // Use cached ground truth
-            distTrue = groundTruth->trueNeighbors[qi];
-            totalTrue += groundTruth->avgTrueTime;
-        }
-        else{
-
-            // Compute true nearest neighbors for evaluation
-            auto t2 = high_resolution_clock::now();
-            distTrue.reserve(data_.vectors.size());
-            for (auto &v : data_.vectors)
+        distTrue.reserve(data_.vectors.size());
+        for (auto &v : data_.vectors)
             distTrue.emplace_back(l2(q, v.values), v.id);
-            std::nth_element(distTrue.begin(), distTrue.begin() + N, distTrue.end());
-            std::sort(distTrue.begin(), distTrue.begin() + N);
-            double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
-            totalTrue += tTrue;
-        }
+        std::nth_element(distTrue.begin(), distTrue.begin() + N, distTrue.end());
+        std::sort(distTrue.begin(), distTrue.begin() + N);
+        double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
+        totalTrue += tTrue;
 
         // Calculate quality metrics
         double AFq = 0, recallq = 0;

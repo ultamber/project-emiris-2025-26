@@ -34,6 +34,5 @@ private:
 public:
     explicit Hypercube(const Arguments &a) : SearchMethod(a) {}
     void buildIndex(const Dataset &data);
-    void search(const Dataset &queries, std::ofstream &out, 
-                 const GroundTruth *groundTruth);
+    void search(const Dataset &queries, std::ofstream &out);
 };

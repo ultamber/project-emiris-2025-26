@@ -7,8 +7,7 @@ class IVFFlat : public SearchMethod
 public:
     explicit IVFFlat(const Arguments &a) : SearchMethod(a) {}
     void buildIndex(const Dataset &data) override;
-    void search(const Dataset &queries, std::ofstream &out, 
-                 const GroundTruth *groundTruth) override;
+    void search(const Dataset &queries, std::ofstream &out) override;
     double silhouetteScore() const;
     std::vector<double> silhouettePerCluster() const;
     int findOptimalK(int kmin, int kmax, unsigned seed, int step = 5);

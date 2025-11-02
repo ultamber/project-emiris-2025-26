@@ -11,7 +11,7 @@ class LSH : public SearchMethod
 public:
     explicit LSH(const Arguments &a) : SearchMethod(a) {}
     void buildIndex(const Dataset &data) override;
-    void search(const Dataset &queries, std::ofstream &out,const GroundTruth *groundTruth) override;
+    void search(const Dataset &queries, std::ofstream &out) override;
 
 private:
     Dataset data_;

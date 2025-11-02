@@ -8,7 +8,7 @@ class IVFPQ : public SearchMethod
 public:
     explicit IVFPQ(const Arguments &a) : SearchMethod(a) {}
     void buildIndex(const Dataset &data) override;
-    void search(const Dataset &queries, std::ofstream &out,const GroundTruth *groundTruth) override;
+    void search(const Dataset &queries, std::ofstream &out) override;
     
     // REMOVE "IVFPQ::" prefix - you're already inside the class!
     std::vector<double> silhouettePerCluster() const;

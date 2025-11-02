@@ -277,8 +277,7 @@ void IVFPQ::buildIndex(const Dataset &data)
 /**
  * Performs IVFPQ search (Slide 50)
  */
-void IVFPQ::search(const Dataset &queries, std::ofstream &out, 
-                 const GroundTruth *groundTruth)
+void IVFPQ::search(const Dataset &queries, std::ofstream &out)
 {
     using namespace std::chrono;
     out << "IVFPQ\n\n";
@@ -410,41 +409,26 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out,
 
         double tApprox = duration<double>(high_resolution_clock::now() - t0).count();
         totalApproxTime += tApprox;
-        std::vector<std::pair<double, int>> distTrue;
 
         // === Ground truth for evaluation ===
-        if (groundTruth)
-        {
-            // Use cached ground truth
-            distTrue = groundTruth->trueNeighbors[qi];
-            totalTrueTime += groundTruth->avgTrueTime;
-        }
-        else
-        {
-            // Compute ground truth
-            auto t2 = high_resolution_clock::now();
-            
-            distTrue.reserve(data_.vectors.size());
-            for (const auto &v : data_.vectors)
-                distTrue.emplace_back(l2(q, v.values), v.id);
+        auto t2 = high_resolution_clock::now();
+        std::vector<std::pair<double, int>> distTrue;
+        distTrue.reserve(data_.vectors.size());
+        for (const auto &v : data_.vectors)
+            distTrue.emplace_back(l2(q, v.values), v.id);
 
-            int keepTrue = std::min(Nret, (int)distTrue.size());
-            if (keepTrue > 0)
-            {
-                std::nth_element(distTrue.begin(),
-                               distTrue.begin() + keepTrue,
-                               distTrue.end());
-                std::sort(distTrue.begin(), distTrue.begin() + keepTrue);
-                distTrue.resize(keepTrue);
-            }
-
-            double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
-            totalTrueTime += tTrue;
+        int keepTrue = std::min(Nret, (int)distTrue.size());
+        if (keepTrue > 0)
+        {
+            std::nth_element(distTrue.begin(),
+                           distTrue.begin() + keepTrue,
+                           distTrue.end());
+            std::sort(distTrue.begin(), distTrue.begin() + keepTrue);
+            distTrue.resize(keepTrue);
         }
 
-        // Get actual sizes after resize
-        int keepTrue = (int)distTrue.size();
-        keepApprox = (int)reranked.size();
+        double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
+        totalTrueTime += tTrue;
 
         // === Quality metrics ===
         double AFq = 0.0, Rq = 0.0;
