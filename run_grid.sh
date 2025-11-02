@@ -7,14 +7,12 @@ set -euo pipefail
 BIN=./bin/search
 
 # Defaults (can be overridden via flags)
-TYPE=mnist
-# leave DATA/QUER empty so we set them after parsing TYPE (and after validating lowercase)
+TYPE="mnist"
+# leave DATA/QUER/R_PARAM/OUTDIR empty so we set them after parsing TYPE (and after validating lowercase)
 DATA=""
 QUER=""
 R_PARAM=""
-OUTDIR=./runs
-
-mkdir -p "$OUTDIR"
+OUTDIR=""
 
 # Parse optional parameters (flags only):
 # Usage: run_grid.sh -t TYPE -d DATA -q QUERY
@@ -64,26 +62,22 @@ if [[ "$TYPE" != "sift" && "$TYPE" != "mnist" ]]; then
   exit 1
 fi
 
-# Set OUTDIR based on TYPE
-OUTDIR="./runs/${TYPE}"
-mkdir -p "$OUTDIR"
+# If DATA/QUER/OUTDIR were not explicitly provided, set sensible defaults based on TYPE
+if [[ "$TYPE" == "sift" ]]; then
+  R_PARAM=2
+else
+  R_PARAM=2000
+fi
 
-# If DATA/QUER were not explicitly provided, set sensible defaults based on TYPE
+if [[ -z "${OUTDIR:-}" ]]; then
+  OUTDIR="./runs/${TYPE^^}"
+  mkdir -p "$OUTDIR"
+fi
 if [[ -z "${DATA:-}" ]]; then
-  if [[ "$TYPE" == "sift" ]]; then
-    DATA="./datasets/SIFT/input.dat"
-    R_PARAM=2
-  else
-    DATA="./datasets/MNIST/input.dat"
-    R_PARAM=2000
-  fi
+  DATA="./datasets/${TYPE^^}/input.dat"
 fi
 if [[ -z "${QUER:-}" ]]; then
-  if [[ "$TYPE" == "sift" ]]; then
-    QUER="./datasets/SIFT/query.dat"
-  else
-    QUER="./datasets/MNIST/query.dat"
-  fi
+    QUER="./datasets/${TYPE^^}/query.dat"
 fi
 
 echo "Using dataset type: $TYPE"
