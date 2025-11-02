@@ -9,7 +9,7 @@
 #include "ivfpq.hpp"
 #include "bruteforce.hpp"
 #include <iomanip>
-
+#include "ground_truth.hpp"
 Arguments parseArgs(int argc, char *argv[])
 {
     Arguments a;
@@ -32,6 +32,8 @@ Arguments parseArgs(int argc, char *argv[])
             a.useIVFFlat = true;
         else if (flag == "-ivfpq")
             a.useIVFPQ = true;
+        else if (flag == "-bruteforce")
+            a.useBruteForce = true;
         else if (flag == "-N" && i + 1 < argc)
             a.N = std::stoi(argv[++i]);
         else if (flag == "-R" && i + 1 < argc)
@@ -110,17 +112,49 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // === Compute or load ground truth ===
+    GroundTruth groundTruth;
+    GroundTruth *gtPtr = nullptr;  // Will point to ground truth if available
+    
+    if (!args.useBruteForce)  // Only compute/load if NOT running bruteforce
+    {
+        std::string gtCacheFile = "groundtruth_" + args.type + "_N" + std::to_string(args.N) + ".bin";
+
+        if (groundTruth.load(gtCacheFile))
+        {
+            std::cout << "Loaded cached ground truth from " << gtCacheFile << "\n";
+            gtPtr = &groundTruth;  // Cache available
+        }
+        else
+        {
+            std::cout << "Computing ground truth (this may take a while)...\n";
+            auto t0 = std::chrono::high_resolution_clock::now();
+
+            groundTruth.compute(data, queries, args.N);
+
+            auto t1 = std::chrono::high_resolution_clock::now();
+            double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+            std::cout << "Ground truth computed in " << elapsed << " seconds\n";
+            std::cout << "Average time per query: " << groundTruth.avgTrueTime << " seconds\n";
+
+            groundTruth.save(gtCacheFile);
+            std::cout << "Cached ground truth saved to " << gtCacheFile << "\n";
+            
+            gtPtr = &groundTruth;  // Cache now available
+        }
+    }
     if (args.useLSH)
     {
         LSH alg(args);
         alg.buildIndex(data);
-        alg.search(queries, out);
+        alg.search(queries, out, gtPtr);
     }
     else if (args.useHypercube)
     {
         Hypercube alg(args);
         alg.buildIndex(data);
-        alg.search(queries, out);
+        alg.search(queries, out, gtPtr);
     }
     else if (args.useIVFFlat)
     {
@@ -135,13 +169,28 @@ int main(int argc, char *argv[])
         // for (size_t i = 0; i < perCluster.size(); ++i)
         //     std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
         // std::cout << "=============================\n";
-        alg.search(queries, out);
+        alg.search(queries, out, gtPtr);
     }
     else if (args.useIVFPQ)
     {
         IVFPQ alg(args);
         alg.buildIndex(data);
-        alg.search(queries, out);
+        // double sil = alg.silhouetteScore();
+        // std::cout << std::fixed << std::setprecision(6);
+        // std::cout << "\n=== Silhouette Evaluation ===\n";
+        // std::cout << "Overall silhouette coefficient: " << sil << "\n";
+
+        // auto perCluster = alg.silhouettePerCluster();
+        // for (size_t i = 0; i < perCluster.size(); ++i)
+        //     std::cout << "Cluster " << i << ": silhouette = " << perCluster[i] << "\n";
+        // std::cout << "=============================\n";
+        alg.search(queries, out, gtPtr);
+    }
+    else if (args.useBruteForce)
+    {
+        BruteForce alg(args);
+        alg.buildIndex(data);
+        alg.search(queries, out, nullptr);
     }
     else
     {

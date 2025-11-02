@@ -13,12 +13,14 @@ struct Arguments {
     double R = 1000.0;
     int seed = 1;
     bool rangeSearch = false;
+    int maxQueries = -1;
 
     // Algorithm selection
     bool useLSH = false;
     bool useHypercube = false;
     bool useIVFFlat = false;
     bool useIVFPQ = false;
+    bool useBruteForce = false;
 
     // LSH
     int k = 4;

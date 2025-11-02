@@ -4,6 +4,9 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstdint>
+#include <numeric>
+#include <cmath>
+
 struct VectorData
 {
     int id;
@@ -54,6 +57,19 @@ inline void Dataset::load(const std::string &path, const std::string &type)
                     unsigned char val;
                     f.read((char *)&val, 1);
                     vectors[i].values[j] = static_cast<float>(val) / 255.0f;
+                }
+
+                // 🔹 Step 2: Normalize the entire image vector to unit L2 norm
+                double norm = std::sqrt(std::inner_product(
+                    vectors[i].values.begin(),
+                    vectors[i].values.end(),
+                    vectors[i].values.begin(),
+                    0.0));
+
+                if (norm > 1e-12)
+                { // prevent division by zero
+                    for (auto &x : vectors[i].values)
+                        x /= static_cast<float>(norm);
                 }
             }
         }

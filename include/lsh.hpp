@@ -11,11 +11,12 @@ class LSH : public SearchMethod
 public:
     explicit LSH(const Arguments &a) : SearchMethod(a) {}
     void buildIndex(const Dataset &data) override;
-    void search(const Dataset &queries, std::ofstream &out) override;
+    void search(const Dataset &queries, std::ofstream &out,const GroundTruth *groundTruth) override;
 
 private:
     Dataset data_;
     int dim_ = 0;
+    const std::uint64_t MOD_M = 4294967291ULL; // 2^32 - 5, a large prime
     // --- LSH parameters ---
     size_t tableSize_ = 0;                                                        // TableSize = n / 4
     std::vector<std::vector<long long>> r_;                                       // random coefficients
@@ -25,7 +26,7 @@ private:
     // L × k random offsets t in [0,w)
     std::vector<std::vector<float>> t_; // [L][k]
     double w_ = 4.0;
-    static constexpr std::uint64_t MOD_M = (1ull << 32) - 5;
+    // static constexpr std::uint64_t MOD_M = (1ull << 32) - 5;
     std::uint64_t keyFor(const std::vector<float> &v, int li) const;
     static double l2(const std::vector<float> &a, const std::vector<float> &b);
 
@@ -56,18 +57,6 @@ private:
     }
 
     // Compute amplified ID(p) = Σ r_j h_j(p) mod M  (slide 21)
-    inline std::uint64_t computeID(const std::vector<float> &v, int li) const
-    {
-        unsigned __int128 acc = 0;
-        for (int j = 0; j < args.k; ++j)
-        {
-            long long hj = hij(v, li, j);
-            acc += ((__int128)r_[li][j] * (__int128)hj) % (__int128)MOD_M;
-            if (hj < min_h_seen_)
-                min_h_seen_ = hj;
-            if (hj < 0)
-                ++neg_h_count_;
-        }
-        return (std::uint64_t)(acc % MOD_M);
-    }
+    std::uint64_t computeID(const std::vector<float> &v, int li) const;
+
 };

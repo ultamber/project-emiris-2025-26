@@ -4,12 +4,15 @@
 #include <fstream>
 #include "dataset.hpp"
 #include "arguments.hpp"
+#include "ground_truth.hpp"
 
 class BruteForce {
 public:
     explicit BruteForce(const Arguments& args);
     void buildIndex(const Dataset& data); // kept for API symmetry (no-op)
-    void search(const Dataset& queries, std::ofstream& out);
+    void search(const Dataset& queries, std::ofstream& out,const GroundTruth *groundTruth);
+    std::vector<std::pair<double, int>> computeTrueNeighbors(
+        const std::vector<float>& query, int N);
 
 private:
     Arguments cfg;
