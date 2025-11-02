@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 
 /**
  * Computes the L2 (Euclidean) distance between two vectors
@@ -13,9 +14,11 @@
  * @param b Second vector
  * @return The Euclidean distance between vectors a and b
  */
-double Hypercube::l2(const std::vector<float>& a, const std::vector<float>& b) {
+double Hypercube::l2(const std::vector<float> &a, const std::vector<float> &b)
+{
     double s = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
+    for (size_t i = 0; i < a.size(); ++i)
+    {
         double d = a[i] - b[i];
         s += d * d;
     }
@@ -23,221 +26,337 @@ double Hypercube::l2(const std::vector<float>& a, const std::vector<float>& b) {
 }
 
 /**
- * Builds the Hypercube index for the input dataset
+ * Builds the Hypercube index for the input dataset (Slide 24)
  * @param data Input dataset to be indexed
  */
-void Hypercube::buildIndex(const Dataset& data) {
-    // Store dataset and its dimension
+void Hypercube::buildIndex(const Dataset &data)
+{
     data_ = data;
     dim_ = data.dimension;
-    int kproj = args.kproj;  // Number of projections (bits in vertex label)
 
-    // Initialize random number generator for projections
+    // Slide 24: d' = floor(log₂ n) - {1,2,3}
+    const size_t n = data_.vectors.size();
+    int dlog = (n > 0) ? (int)std::floor(std::log2((double)std::max<size_t>(1, n))) : 1;
+    kproj_ = (args.kproj > 0) ? args.kproj : std::max(1, dlog - 2);
+
+    // Slide 18: w ∈ [2, 6], larger for range queries
+    w_ = (args.w > 0) ? args.w : 4.0f;
+
+    // Random number generators
     std::mt19937_64 rng(args.seed);
-    std::normal_distribution<double> normal(0.0, 1.0);  // For random projections
+    std::normal_distribution<double> normal(0.0, 1.0);    // For LSH projections
+    std::uniform_real_distribution<float> unif(0.0f, w_); // For LSH shifts
+    std::uniform_int_distribution<uint32_t> uni32(1u, 0xffffffffu); // For f_j hash functions
 
-    // Generate random projection vectors
-    proj_.assign(kproj, std::vector<float>(dim_));
-    for (int j = 0; j < kproj; ++j)
+    // Slide 24: Generate d' base LSH functions h_j
+    // Each h_j(p) = floor((a_j · p + t_j) / w)
+    proj_.assign(kproj_, std::vector<float>(dim_));
+    shift_.assign(kproj_, 0.0f);
+    for (int j = 0; j < kproj_; ++j)
+    {
         for (int d = 0; d < dim_; ++d)
             proj_[j][d] = (float)normal(rng);
+        shift_[j] = unif(rng);
+    }
 
-    // Build the hypercube by mapping each point to a vertex
-    cube_.clear();
-    for (int id = 0; id < (int)data_.vectors.size(); ++id)
-        cube_[vertexOf(data_.vectors[id].values)].push_back(id);
+    // Slide 24: Generate bit-mapping functions f_j: Z → {0,1}
+    // f_j maps buckets to bits uniformly at random
+    // Implementation: use random hash function f_j(h) = (aₕ · h + bₕ) mod 2
+    fA_.resize(kproj_);
+    fB_.resize(kproj_);
+    for (int j = 0; j < kproj_; ++j)
+    {
+        fA_[j] = (std::uint64_t)uni32(rng);
+        fB_[j] = (std::uint64_t)uni32(rng);
+        if (fA_[j] == 0)
+            fA_[j] = 1; // Ensure non-zero
+    }
+
+    // Slide 25: Choose storage strategy based on d'
+    // Dense array for small d' (≤ 24 bits = 16M vertices)
+    // Sparse map for large d'
+    denseCube_ = (kproj_ <= 24);
+    if (denseCube_)
+    {
+        cubeDense_.assign(1ULL << kproj_, {});
+        cubeSparse_.clear();
+    }
+    else
+    {
+        cubeSparse_.clear();
+        cubeDense_.clear();
+    }
+
+    // Slide 24: Insert all data points into their vertices
+    for (int id = 0; id < (int)n; ++id)
+    {
+        const auto &v = data_.vectors[id].values;
+        std::uint64_t vtx = vertexOf(v);
+        if (denseCube_)
+            cubeDense_[vtx].push_back(id);
+        else
+            cubeSparse_[vtx].push_back(id);
+    }
+
+    if (std::getenv("CUBE_DEBUG"))
+    {
+        std::cerr << "[CUBE] n=" << n
+                  << " dim=" << dim_
+                  << " d'=" << kproj_
+                  << " w=" << w_
+                  << " dense=" << denseCube_
+                  << " vertices_allocated=" << (denseCube_ ? (1ULL << kproj_) : cubeSparse_.size())
+                  << "\n";
+    }
 }
 
 /**
- * Maps a vector to a vertex in the hypercube
+ * Computes h_j(v) = floor((a_j · v + t_j) / w) for projection j (Slide 18)
  * @param v Input vector
- * @return 64-bit vertex label where each bit represents a projection result
+ * @param j Projection index
+ * @return Hash value
  */
-std::uint64_t Hypercube::vertexOf(const std::vector<float>& v) const {
+long long Hypercube::hij(const std::vector<float> &v, int j) const
+{
+    double dot = 0.0;
+    for (int d = 0; d < dim_; ++d)
+        dot += proj_[j][d] * v[d];
+    return (long long)std::floor((dot + shift_[j]) / w_);
+}
+
+/**
+ * Maps hash value to bit using function f_j (Slide 24)
+ * @param h Hash value
+ * @param j Projection index
+ * @return Bit value (0 or 1)
+ */
+bool Hypercube::fj(long long h, int j) const
+{
+    // Random hash function: (a·h + b) mod 2
+    std::uint64_t hval = (std::uint64_t)(h >= 0 ? h : -h);
+    return ((fA_[j] * hval + fB_[j]) & 1) != 0;
+}
+
+/**
+ * Maps a vector to a vertex in the hypercube (Slide 24)
+ * Vertex label is d'-bit string where bit j = f_j(h_j(v))
+ * @param v Input vector
+ * @return 64-bit vertex label
+ */
+std::uint64_t Hypercube::vertexOf(const std::vector<float> &v) const
+{
     std::uint64_t key = 0;
-    for (int j = 0; j < args.kproj; ++j) {
-        // Compute dot product with projection vector
-        double dot = 0.0;
-        for (int d = 0; d < dim_; ++d)
-            dot += proj_[j][d] * v[d];
-        // Set bit j based on projection sign
-        if (dot >= 0.0)
+    for (int j = 0; j < kproj_; ++j)
+    {
+        long long hj = hij(v, j);    // Compute LSH hash
+        if (fj(hj, j))               // Map to bit using f_j
             key |= (1ULL << j);
     }
     return key;
 }
 
 /**
- * Generates a list of vertices to probe in order of increasing Hamming distance
- * @param base Starting vertex
- * @param kproj Number of projection dimensions (bits)
+ * Generates vertices to probe in order of increasing Hamming distance (Slide 24)
+ * @param base Starting vertex (query's vertex)
+ * @param kproj Number of bits (d')
  * @param maxProbes Maximum number of vertices to return
+ * @param maxHamming Maximum Hamming distance to probe (Slide 25)
  * @return Vector of vertex labels to probe
  */
-std::vector<std::uint64_t> Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes) const {
+std::vector<std::uint64_t>
+Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHamming) const
+{
     std::vector<std::uint64_t> out{base};
-    if ((int)out.size() >= maxProbes) return out;
+    if ((int)out.size() >= maxProbes)
+        return out;
 
-    // Generate vertices at increasing Hamming distances
-    for (int h = 1; h <= kproj && (int)out.size() < maxProbes; ++h) {
-        // Initialize combination indices
+    // Slide 25: Threshold on Hamming distance
+    const int Hmax = std::min(kproj, maxHamming);
+    
+    // Generate vertices at increasing Hamming distances: 1, 2, ...
+    for (int h = 1; h <= Hmax && (int)out.size() < maxProbes; ++h)
+    {
+        // Generate all combinations of h bit flips
         std::vector<int> idx(h);
         std::iota(idx.begin(), idx.end(), 0);
-
-        while (true) {
-            // Generate vertex by flipping bits at current positions
+        
+        while (true)
+        {
+            // Flip bits at positions in idx
             std::uint64_t mask = 0;
-            for (int i : idx) mask |= (1ULL << i);
+            for (int i : idx)
+                mask |= (1ULL << i);
             out.push_back(base ^ mask);
             
-            if ((int)out.size() >= maxProbes) break;
-
-            // Generate next combination in lexicographic order
+            if ((int)out.size() >= maxProbes)
+                break;
+            
+            // Next combination in lexicographic order
             int i;
-            for (i = h - 1; i >= 0 && idx[i] == i + kproj - h; --i);
-            if (i < 0) break;
+            for (i = h - 1; i >= 0 && idx[i] == i + kproj - h; --i)
+                ;
+            if (i < 0)
+                break;
             ++idx[i];
-            for (int j = i + 1; j < h; ++j) idx[j] = idx[j - 1] + 1;
+            for (int j = i + 1; j < h; ++j)
+                idx[j] = idx[j - 1] + 1;
         }
     }
     return out;
 }
 
 /**
- * Performs Hypercube search for all queries
+ * Performs Hypercube search for all queries (Slides 24-25)
  * @param queries Query dataset
  * @param out Output file stream for results
  */
-void Hypercube::search(const Dataset& queries, std::ofstream& out) {
+void Hypercube::search(const Dataset &queries, std::ofstream &out)
+{
     using namespace std::chrono;
     out << "Hypercube\n\n";
 
-    // Extract search parameters
-    int M = args.M;           // Maximum candidates to consider
-    int probes = args.probes; // Maximum vertices to probe
-    double R = args.R;        // Range search radius
+    // Slide 25: Search parameters
+    int M = args.M;           // Threshold: max candidates to check in R^d
+    int probes = args.probes; // Threshold: max vertices to probe
+    int maxHam = (args.maxHamming > 0) ? args.maxHamming : kproj_; // Hamming distance bound
+    double R = args.R;
     bool doRange = args.rangeSearch;
-    int N = args.N;           // Number of nearest neighbors to find
+    int N = args.N;
 
-    // Initialize performance tracking metrics
-    double totalAF = 0.0, totalRecall = 0.0;
-    double totalApproxTime = 0.0, totalTrueTime = 0.0;
+    double totalAF = 0, totalRecall = 0, totalApprox = 0, totalTrue = 0;
     int Q = (int)queries.vectors.size();
+    
+    if (args.maxQueries > 0)
+        Q = std::min(Q, static_cast<int>(args.maxQueries));
 
-    // Process each query
-    for (int qi = 0; qi < Q; ++qi) {
-        const auto& q = queries.vectors[qi].values;
-
-        // --- Approximate search phase ---
+    for (int qi = 0; qi < Q; ++qi)
+    {
+        const auto &q = queries.vectors[qi].values;
         auto t0 = high_resolution_clock::now();
 
-        // Collect candidate points from nearby vertices
-        std::unordered_set<int> cand;
-        cand.reserve(1024);
-
-        // Generate list of vertices to probe
-        auto base = vertexOf(q);
-        auto plist = probesList(base, args.kproj, probes);
-
-        // Collect points from each vertex until M candidates found
-        for (auto vtx : plist) {
-            auto it = cube_.find(vtx);
-            if (it != cube_.end()) {
-                for (int id : it->second) {
-                    cand.insert(id);
-                    if ((int)cand.size() >= M) break;
-                }
+        // Slide 24, Step 1: Project query to hypercube vertex
+        std::uint64_t base = vertexOf(q);
+        
+        // Slide 24, Step 2: Check points in same and nearby vertices
+        // Generate vertices in increasing Hamming distance
+        auto plist = probesList(base, kproj_, probes, maxHam);
+        
+        // Collect unique candidates from probed vertices
+        std::unordered_set<int> candSet;
+        candSet.reserve(std::min<size_t>((size_t)M, (size_t)4096));
+        size_t gathered = 0;
+        
+        for (auto vtx : plist)
+        {
+            const std::vector<int> *bucket = nullptr;
+            if (denseCube_)
+            {
+                bucket = &cubeDense_[vtx];
             }
-            if ((int)cand.size() >= M) break;
+            else
+            {
+                auto it = cubeSparse_.find(vtx);
+                if (it == cubeSparse_.end())
+                    continue;
+                bucket = &it->second;
+            }
+            
+            // Add points from this vertex
+            for (int id : *bucket)
+            {
+                if (candSet.insert(id).second && ++gathered >= (size_t)M)
+                    break;
+            }
+            if (gathered >= (size_t)M)
+                break;
         }
 
-        // Calculate distances to candidates
-        std::vector<std::pair<double,int>> distApprox;
-        distApprox.reserve(cand.size());
-        std::vector<int> rlist;  // For range search results
-
-        for (int id : cand) {
+        // Compute actual distances to candidates
+        std::vector<std::pair<double, int>> distApprox;
+        distApprox.reserve(candSet.size());
+        std::vector<int> rlist;
+        
+        for (int id : candSet)
+        {
             double d = l2(q, data_.vectors[id].values);
             distApprox.emplace_back(d, id);
-            if (doRange && d <= R) rlist.push_back(id);
+            if (doRange && d <= R)
+                rlist.push_back(id);
         }
 
-        // Sort top-N approximate neighbors
-        if (!distApprox.empty()) {
-            int topN = std::min(N, (int)distApprox.size());
-            std::nth_element(distApprox.begin(), distApprox.begin()+topN, distApprox.end());
-            std::sort(distApprox.begin(), distApprox.begin()+topN);
+        // Slide 24, Step 3: Return closest candidates or range search results
+        int topN = std::min(N, (int)distApprox.size());
+        if (topN > 0)
+        {
+            std::nth_element(distApprox.begin(), distApprox.begin() + topN, distApprox.end());
+            std::sort(distApprox.begin(), distApprox.begin() + topN);
             distApprox.resize(topN);
         }
+        
+        double tApprox = duration<double>(high_resolution_clock::now() - t0).count();
+        totalApprox += tApprox;
 
-        // Record approximate search time
-        auto t1 = high_resolution_clock::now();
-        double tApprox = duration<double>(t1 - t0).count();
-        totalApproxTime += tApprox;
-
-        // --- True search phase ---
+        // Ground truth for evaluation
         auto t2 = high_resolution_clock::now();
-        std::vector<std::pair<double,int>> distTrue;
+        std::vector<std::pair<double, int>> distTrue;
         distTrue.reserve(data_.vectors.size());
-        for (const auto &v : data_.vectors)
+        for (auto &v : data_.vectors)
             distTrue.emplace_back(l2(q, v.values), v.id);
-        int topN = std::min(N, (int)distTrue.size());
-        std::nth_element(distTrue.begin(), distTrue.begin()+topN, distTrue.end());
-        std::sort(distTrue.begin(), distTrue.begin()+topN);
-        distTrue.resize(topN);
-        auto t3 = high_resolution_clock::now();
-        double tTrue = duration<double>(t3 - t2).count();
-        totalTrueTime += tTrue;
+        if (topN > 0)
+        {
+            std::nth_element(distTrue.begin(), distTrue.begin() + topN, distTrue.end());
+            std::sort(distTrue.begin(), distTrue.begin() + topN);
+            distTrue.resize(topN);
+        }
+        double tTrue = duration<double>(high_resolution_clock::now() - t2).count();
+        totalTrue += tTrue;
 
-        // --- Compute metrics ---
-        double AFq = 0.0, recallq = 0.0;
-        for (int ni = 0; ni < (int)distApprox.size(); ++ni) {
-            double da = distApprox[ni].first;
-            double dt = distTrue[ni].first;
-            AFq += (dt > 0.0) ? da / dt : 1.0;
-
-            // recall@N: check if this approx id is in true topN
-            for (auto &p : distTrue) {
-                if (p.second == distApprox[ni].second) {
-                    recallq += 1.0;
+        // Metrics
+        double AFq = 0, recallq = 0;
+        for (int i = 0; i < topN; ++i)
+        {
+            double da = distApprox[i].first, dt = distTrue[i].first;
+            AFq += (dt > 0 ? da / dt : 1.0);
+            int aid = distApprox[i].second;
+            for (int j = 0; j < topN; ++j)
+                if (aid == distTrue[j].second)
+                {
+                    recallq += 1;
                     break;
                 }
-            }
         }
-
-        if (N > 0 && !distApprox.empty()) {
+        if (topN > 0 && !distApprox.empty())
+        {
             AFq /= distApprox.size();
-            recallq /= N;
+            recallq /= topN;
         }
-
         totalAF += AFq;
         totalRecall += recallq;
 
-        // --- Output per query ---
-        out << "Query: " << qi << "\n";
-        out << std::fixed << std::setprecision(6);
-        for (int ni = 0; ni < (int)distApprox.size(); ++ni) {
-            out << "Nearest neighbor-" << (ni+1) << ": " << distApprox[ni].second << "\n";
-            out << "distanceApproximate: " << distApprox[ni].first << "\n";
-            out << "distanceTrue: " << distTrue[ni].first << "\n";
+        // Output per query
+        out << "Query: " << qi << "\n"
+            << std::fixed << std::setprecision(6);
+        for (int i = 0; i < topN; ++i)
+        {
+            out << "Nearest neighbor-" << (i + 1) << ": " << distApprox[i].second << "\n";
+            out << "distanceApproximate: " << distApprox[i].first << "\n";
+            out << "distanceTrue: " << distTrue[i].first << "\n";
         }
         out << "\nR-near neighbors:\n";
-        for (int id : rlist) out << id << "\n";
+        for (int id : rlist)
+            out << id << "\n";
         out << "\n";
     }
 
-    // --- Summary ---
-    double avgAF = totalAF / Q;
-    double avgRecall = totalRecall / Q;
-    double avgApprox = totalApproxTime / Q;
-    double avgTrue = totalTrueTime / Q;
-    double qpsOverall = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
-
+    // Summary
+    double avgAF = totalAF / Q, avgRecall = totalRecall / Q;
+    double avgApprox = totalApprox / Q, avgTrue = totalTrue / Q;
+    double qps = (avgApprox > 0) ? 1.0 / avgApprox : 0.0;
+    
     out << "---- Summary (averages over queries) ----\n";
-    out << std::fixed << std::setprecision(6)
-        << "Average AF: " << avgAF << "\n"
-        << "Recall@N: " << avgRecall << "\n"
-        << "QPS: " << qpsOverall << "\n"
-        << "tApproximateAverage: " << avgApprox << "\n"
-        << "tTrueAverage: " << avgTrue << "\n";
+    out << "Average AF: " << avgAF << "\n";
+    out << "Recall@N: " << avgRecall << "\n";
+    out << "QPS: " << qps << "\n";
+    out << "tApproximateAverage: " << avgApprox << "\n";
+    out << "tTrueAverage: " << avgTrue << "\n";
 }

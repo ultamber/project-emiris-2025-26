@@ -1,25 +1,38 @@
 #pragma once
-#include "search_method.hpp"
 #include <unordered_map>
 #include <vector>
-#include <cstdint>
+#include "search_method.hpp"
 
-class Hypercube : public SearchMethod {
-public:
-    explicit Hypercube(const Arguments& a) : SearchMethod(a) {}
-    void buildIndex(const Dataset& data) override;
-    void search(const Dataset& queries, std::ofstream& out) override;
-
+class Hypercube : public SearchMethod{
 private:
     Dataset data_;
-    int dim_=0;
-
-    // kproj random projection vectors
-    std::vector<std::vector<float>> proj_; // [kproj][dim]
-    // vertex -> ids
-    std::unordered_map<std::uint64_t, std::vector<int>> cube_;
-
-    std::uint64_t vertexOf(const std::vector<float>& v) const;
-    static double l2(const std::vector<float>& a, const std::vector<float>& b);
-    std::vector<std::uint64_t> probesList(std::uint64_t base, int kproj, int maxProbes) const;
+    int dim_;
+    int kproj_;  // d' in the PDF
+    float w_;    // Bucket width for LSH
+    
+    // LSH hash function parameters (Slide 18, 24)
+    std::vector<std::vector<float>> proj_;   // Random projection vectors [kproj_][dim_]
+    std::vector<float> shift_;                // Random shifts [kproj_]
+    
+    // Bit mapping functions f_j (Slide 24)
+    std::vector<std::uint64_t> fA_;  // Hash coefficients for f_j [kproj_]
+    std::vector<std::uint64_t> fB_;  // Hash offsets for f_j [kproj_]
+    
+    // Hypercube storage (Slide 25)
+    bool denseCube_;  // Use dense or sparse representation
+    std::vector<std::vector<int>> cubeDense_;  // Dense: [2^kproj_] vertices
+    std::unordered_map<std::uint64_t, std::vector<int>> cubeSparse_;  // Sparse
+    
+    // Helper functions
+    long long hij(const std::vector<float> &v, int j) const;
+    bool fj(long long h, int j) const;
+    std::uint64_t vertexOf(const std::vector<float> &v) const;
+    std::vector<std::uint64_t> probesList(std::uint64_t base, int kproj, 
+                                          int maxProbes, int maxHamming) const;
+    double l2(const std::vector<float> &a, const std::vector<float> &b);
+    
+public:
+    explicit Hypercube(const Arguments &a) : SearchMethod(a) {}
+    void buildIndex(const Dataset &data);
+    void search(const Dataset &queries, std::ofstream &out);
 };
