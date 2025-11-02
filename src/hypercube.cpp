@@ -26,7 +26,7 @@ double Hypercube::l2(const std::vector<float> &a, const std::vector<float> &b)
 }
 
 /**
- * Builds the Hypercube index for the input dataset (Slide 24)
+ * Builds the Hypercube index for the input dataset ref 24
  * @param data Input dataset to be indexed
  */
 void Hypercube::buildIndex(const Dataset &data)
@@ -34,12 +34,12 @@ void Hypercube::buildIndex(const Dataset &data)
     data_ = data;
     dim_ = data.dimension;
 
-    // Slide 24: d' = floor(log₂ n) - {1,2,3}
+    // slide 24: d' = floor(log_2 n) - {1,2,3}
     const size_t n = data_.vectors.size();
     int dlog = (n > 0) ? (int)std::floor(std::log2((double)std::max<size_t>(1, n))) : 1;
     kproj_ = (args.kproj > 0) ? args.kproj : std::max(1, dlog - 2);
 
-    // Slide 18: w ∈ [2, 6], larger for range queries
+    // slide 18: w ∈ [2, 6], larger for range queries
     w_ = (args.w > 0) ? args.w : 4.0f;
 
     // Random number generators
@@ -48,7 +48,7 @@ void Hypercube::buildIndex(const Dataset &data)
     std::uniform_real_distribution<float> unif(0.0f, w_); // For LSH shifts
     std::uniform_int_distribution<uint32_t> uni32(1u, 0xffffffffu); // For f_j hash functions
 
-    // Slide 24: Generate d' base LSH functions h_j
+    // slide 24: Generate d' base LSH functions h_j
     // Each h_j(p) = floor((a_j · p + t_j) / w)
     proj_.assign(kproj_, std::vector<float>(dim_));
     shift_.assign(kproj_, 0.0f);
@@ -59,7 +59,7 @@ void Hypercube::buildIndex(const Dataset &data)
         shift_[j] = unif(rng);
     }
 
-    // Slide 24: Generate bit-mapping functions f_j: Z → {0,1}
+    // slide 24: Generate bit-mapping functions f_j: Z → {0,1}
     // f_j maps buckets to bits uniformly at random
     // Implementation: use random hash function f_j(h) = (aₕ · h + bₕ) mod 2
     fA_.resize(kproj_);
@@ -72,7 +72,7 @@ void Hypercube::buildIndex(const Dataset &data)
             fA_[j] = 1; // Ensure non-zero
     }
 
-    // Slide 25: Choose storage strategy based on d'
+    // slide 25: Choose storage strategy based on d'
     // Dense array for small d' (≤ 24 bits = 16M vertices)
     // Sparse map for large d'
     denseCube_ = (kproj_ <= 24);
@@ -87,7 +87,7 @@ void Hypercube::buildIndex(const Dataset &data)
         cubeDense_.clear();
     }
 
-    // Slide 24: Insert all data points into their vertices
+    // slide 24: Insert all data points into their vertices
     for (int id = 0; id < (int)n; ++id)
     {
         const auto &v = data_.vectors[id].values;
@@ -111,7 +111,7 @@ void Hypercube::buildIndex(const Dataset &data)
 }
 
 /**
- * Computes h_j(v) = floor((a_j · v + t_j) / w) for projection j (Slide 18)
+ * Computes h_j(v) = floor((a_j · v + t_j) / w) for projection j ref 18
  * @param v Input vector
  * @param j Projection index
  * @return Hash value
@@ -125,7 +125,7 @@ long long Hypercube::hij(const std::vector<float> &v, int j) const
 }
 
 /**
- * Maps hash value to bit using function f_j (Slide 24)
+ * Maps hash value to bit using function f_j ref 24
  * @param h Hash value
  * @param j Projection index
  * @return Bit value (0 or 1)
@@ -138,7 +138,7 @@ bool Hypercube::fj(long long h, int j) const
 }
 
 /**
- * Maps a vector to a vertex in the hypercube (Slide 24)
+ * Maps a vector to a vertex in the hypercube ref 24
  * Vertex label is d'-bit string where bit j = f_j(h_j(v))
  * @param v Input vector
  * @return 64-bit vertex label
@@ -156,11 +156,11 @@ std::uint64_t Hypercube::vertexOf(const std::vector<float> &v) const
 }
 
 /**
- * Generates vertices to probe in order of increasing Hamming distance (Slide 24)
+ * Generates vertices to probe in order of increasing Hamming distance ref 24
  * @param base Starting vertex (query's vertex)
  * @param kproj Number of bits (d')
  * @param maxProbes Maximum number of vertices to return
- * @param maxHamming Maximum Hamming distance to probe (Slide 25)
+ * @param maxHamming Maximum Hamming distance to probe ref 25
  * @return Vector of vertex labels to probe
  */
 std::vector<std::uint64_t>
@@ -170,7 +170,7 @@ Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHammi
     if ((int)out.size() >= maxProbes)
         return out;
 
-    // Slide 25: Threshold on Hamming distance
+    // slide 25: Threshold on Hamming distance
     const int Hmax = std::min(kproj, maxHamming);
     
     // Generate vertices at increasing Hamming distances: 1, 2, ...
@@ -206,7 +206,7 @@ Hypercube::probesList(std::uint64_t base, int kproj, int maxProbes, int maxHammi
 }
 
 /**
- * Performs Hypercube search for all queries (Slides 24-25)
+ * Performs Hypercube search for all queries 
  * @param queries Query dataset
  * @param out Output file stream for results
  */
@@ -215,7 +215,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out)
     using namespace std::chrono;
     out << "Hypercube\n\n";
 
-    // Slide 25: Search parameters
+    // slide 25: Search parameters
     int M = args.M;           // Threshold: max candidates to check in R^d
     int probes = args.probes; // Threshold: max vertices to probe
     int maxHam = (args.maxHamming > 0) ? args.maxHamming : kproj_; // Hamming distance bound
@@ -234,10 +234,10 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out)
         const auto &q = queries.vectors[qi].values;
         auto t0 = high_resolution_clock::now();
 
-        // Slide 24, Step 1: Project query to hypercube vertex
+        // slide 24 Project query to hypercube vertex
         std::uint64_t base = vertexOf(q);
         
-        // Slide 24, Step 2: Check points in same and nearby vertices
+        // slide 24 Check points in same and nearby vertices
         // Generate vertices in increasing Hamming distance
         auto plist = probesList(base, kproj_, probes, maxHam);
         
@@ -284,7 +284,7 @@ void Hypercube::search(const Dataset &queries, std::ofstream &out)
                 rlist.push_back(id);
         }
 
-        // Slide 24, Step 3: Return closest candidates or range search results
+        // slide 24 Return closest candidates or range search results
         int topN = std::min(N, (int)distApprox.size());
         if (topN > 0)
         {

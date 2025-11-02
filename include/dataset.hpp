@@ -59,7 +59,7 @@ inline void Dataset::load(const std::string &path, const std::string &type)
                     vectors[i].values[j] = static_cast<float>(val) / 255.0f;
                 }
 
-                // 🔹 Step 2: Normalize the entire image vector to unit L2 norm
+                // Normalize the entire image vector to unit L2 norm
                 double norm = std::sqrt(std::inner_product(
                     vectors[i].values.begin(),
                     vectors[i].values.end(),

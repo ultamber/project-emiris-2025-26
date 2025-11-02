@@ -23,7 +23,7 @@ double IVFPQ::l2(const std::vector<float> &a, const std::vector<float> &b) const
 }
 
 /**
- * Lloyd's algorithm for k-means clustering (Slide 31)
+ * Lloyd's algorithm for k-means clustering ref 31)
  */
 void IVFPQ::kmeans(const std::vector<std::vector<float>> &P, int k, int iters, unsigned seed,
                    std::vector<std::vector<float>> &C, std::vector<int> *outAssign)
@@ -110,7 +110,7 @@ void IVFPQ::kmeans(const std::vector<std::vector<float>> &P, int k, int iters, u
 }
 
 /**
- * Computes residual vectors r(x) = x - c(x) for all points (Slide 49, Step 3)
+ * Computes residual vectors r(x) = x - c(x) for all points ref 49
  */
 void IVFPQ::makeResiduals(const Dataset &data, const std::vector<int> &assign,
                           std::vector<std::vector<float>> &residuals)
@@ -126,14 +126,14 @@ void IVFPQ::makeResiduals(const Dataset &data, const std::vector<int> &assign,
 }
 
 /**
- * Trains Product Quantizer on residuals (Slide 49, Steps 4-5)
+ * Trains Product Quantizer on residuals ref 49
  * Split residual into M subspaces, run k-means on each with s=2^nbits centroids
  */
 void IVFPQ::trainPQ(const std::vector<std::vector<float>> &R)
 {
     int D = dim_, M = M_;
     
-    // Slide 49, Step 4: Split r(x) into M parts
+    // slide 49Split r(x) into M parts
     subdim_.assign(M, D / M);
     for (int i = 0; i < D % M; ++i)
         ++subdim_[i]; // Distribute remainder
@@ -152,7 +152,7 @@ void IVFPQ::trainPQ(const std::vector<std::vector<float>> &R)
         for (const auto &r : R)
             subspace.emplace_back(r.begin() + offset, r.begin() + offset + sd);
 
-        // Slide 49, Step 5: Lloyd's creates clustering with s = 2^nbits centroids
+        // slide 49 Lloyd's creates clustering with s = 2^nbits centroids
         std::vector<std::vector<float>> cb;
         kmeans(subspace, Ks_, 20, seed + m, cb, nullptr);
         kmeansWithPP(subspace, k_, 20, (unsigned)args.seed + m, centroids_, nullptr);
@@ -163,7 +163,7 @@ void IVFPQ::trainPQ(const std::vector<std::vector<float>> &R)
 }
 
 /**
- * Encodes all residuals using trained PQ (Slide 49, Steps 6-7)
+ * Encodes all residuals using trained PQ ref 49
  */
 void IVFPQ::encodeAll(const std::vector<std::vector<float>> &R)
 {
@@ -175,7 +175,7 @@ void IVFPQ::encodeAll(const std::vector<std::vector<float>> &R)
     {
         int sd = subdim_[m];
         
-        // Slide 49, Step 6: For each subspace, find nearest centroid
+        // slide 49 For each subspace, find nearest centroid
         for (int i = 0; i < N; ++i)
         {
             int best = 0;
@@ -196,7 +196,7 @@ void IVFPQ::encodeAll(const std::vector<std::vector<float>> &R)
                 }
             }
             
-            // Slide 49, Step 6: code_i(x) = argmin_h ||r_i(x) - c_{i,h}||_2
+            // slide 49 code_i(x) = argmin_h ||r_i(x) - c_{i,h}||_2
             codes_[i][m] = (uint8_t)best;
         }
         offset += sd;
@@ -204,7 +204,7 @@ void IVFPQ::encodeAll(const std::vector<std::vector<float>> &R)
 }
 
 /**
- * Builds the IVFPQ index (Slide 49)
+ * Builds the IVFPQ index ref 49
  */
 void IVFPQ::buildIndex(const Dataset &data)
 {
@@ -224,7 +224,7 @@ void IVFPQ::buildIndex(const Dataset &data)
         return;
     }
 
-    // Slide 49, Step 1: Run Lloyd's on subset X' ~ √n to obtain centroids {c_j}
+    // slide 49, Run Lloyd's on subset X' ~ √n to obtain centroids {c_j}
     int trainN = std::max(k_, (int)std::sqrt((double)N));
     trainN = std::min(trainN, N);
 
@@ -241,7 +241,7 @@ void IVFPQ::buildIndex(const Dataset &data)
 
     kmeans(Ptrain, k_, 40, (unsigned)args.seed, centroids_, nullptr);
 
-    // Slide 49, Step 2: Assign ALL points to nearest centroid
+    // slide 49, Assign ALL points to nearest centroid
     lists_.assign(k_, {});
     std::vector<int> fullAssign(N, -1);
     for (int i = 0; i < N; ++i)
@@ -262,20 +262,20 @@ void IVFPQ::buildIndex(const Dataset &data)
         fullAssign[i] = best;
     }
 
-    // Slide 49, Step 3: Compute residual vectors r(x) = x - c(x)
+    // slide 49,  Compute residual vectors r(x) = x - c(x)
     std::vector<std::vector<float>> R;
     makeResiduals(data_, fullAssign, R);
 
-    // Slide 49, Steps 4-5: Train product quantizer on residuals
+    // slide 49, Train product quantizer on residuals
     trainPQ(R);
 
-    // Slide 49, Steps 6-7: Encode ALL residuals with trained PQ
+    // slide 49,  Encode ALL residuals with trained PQ
     // PQ(x) = [code_1(x), ..., code_M(x)]
     encodeAll(R);
 }
 
 /**
- * Performs IVFPQ search (Slide 50)
+ * Performs IVFPQ search ref 50
  */
 void IVFPQ::search(const Dataset &queries, std::ofstream &out)
 {
@@ -302,7 +302,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
         // === Approximate search using IVFPQ ===
         auto t0 = high_resolution_clock::now();
 
-        // Slide 50, Step 1: Score centroids - compute ||q - c_j||_2
+        // slide 50Score centroids - compute ||q - c_j||_2
         std::vector<std::pair<double, int>> centroidDists;
         centroidDists.reserve(k_);
         for (int c = 0; c < k_; ++c)
@@ -326,7 +326,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
         std::vector<std::pair<double, int>> adcCandidates; // (adc_distance_squared, id)
         std::vector<int> rlist;
 
-        // Slide 50, Step 2: For each selected c_j
+        // slide 50 For each selected c_j
         for (int pi = 0; pi < probeCount; ++pi)
         {
             int cid = centroidDists[pi].second;
@@ -337,7 +337,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
                 rq[d] = q[d] - centroids_[cid][d];
 
             // Split r(q) = [r_1(q), ..., r_M(q)]
-            // Define LUT[i][h] = ||r_i(q) - c_{i,h}||_2 (Slide 50)
+            // Define LUT[i][h] = ||r_i(q) - c_{i,h}||_2 ref 50)
             std::vector<std::vector<double>> LUT(M_, std::vector<double>(Ks_, 0.0));
             int offset = 0;
             for (int m = 0; m < M_; ++m)
@@ -356,7 +356,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
                 offset += sd;
             }
 
-            // Slide 50, Step 3: Asymmetric Distance Computation (ADC)
+            // slide 50 Asymmetric Distance Computation (ADC)
             // For x in U, d(q,x) = Σ_i LUT[i][code_i(x)]
             for (int id : lists_[cid])
             {
@@ -396,7 +396,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
             }
         }
 
-        // Slide 50, Step 4: Return R nearest points
+        // slide 50,Return R nearest points
         int keepApprox = std::min(Nret, (int)reranked.size());
         if (keepApprox > 0)
         {
@@ -490,7 +490,7 @@ void IVFPQ::search(const Dataset &queries, std::ofstream &out)
 }
 
 /**
- * Overall silhouette score (Slides 44-45)
+ * Overall silhouette score (slides 44-45)
  */
 double IVFPQ::silhouetteScore() const
 {
@@ -560,7 +560,7 @@ double IVFPQ::silhouetteScore() const
 }
 
 /**
- * Per-cluster silhouette averages (Slide 45)
+ * Per-cluster silhouette averages ref 45)
  */
 std::vector<double> IVFPQ::silhouettePerCluster() const
 {
@@ -651,13 +651,13 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         centroids.clear();
         centroids.reserve(k);
         
-        // Step 1: Choose first centroid uniformly at random
+        //Choose first centroid uniformly at random
         int firstIdx = uni(rng);
         centroids.push_back(P[firstIdx]);
         
         std::vector<double> minDist(N, std::numeric_limits<double>::infinity());
         
-        // Steps 2-4: Choose remaining k-1 centroids
+        //Choose remaining k-1 centroids
         for (int t = 1; t < k; ++t)
         {
             // Update D(i) = min distance to any chosen centroid
@@ -669,7 +669,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                     minDist[i] = d;
             }
             
-            // Normalize D(i) to avoid overflow (Slide 42)
+            // Normalize D(i) to avoid overflow ref 42)
             double maxD = *std::max_element(minDist.begin(), minDist.end());
             if (maxD <= 0.0) {
                 // All points are centroids, choose random
@@ -677,7 +677,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 continue;
             }
             
-            // Build partial sums: P(r) = Σ(i=1 to r) D(i)²
+            // Build partial sums: P(r) = Σ(i=1 to r) D(i)^2
             std::vector<double> partialSums(N, 0.0);
             partialSums[0] = (minDist[0] / maxD) * (minDist[0] / maxD);
             for (int i = 1; i < N; ++i)
@@ -686,7 +686,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 partialSums[i] = partialSums[i-1] + normDist * normDist;
             }
             
-            // Choose r with probability ∝ D(r)² (Slide 42)
+            // Choose r with probability ∝ D(r)^2 ref 42)
             // Pick random x ∈ [0, P(N-1)] and find r where P(r-1) < x ≤ P(r)
             double x = unif(rng) * partialSums[N-1];
             
@@ -701,7 +701,6 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
     
     /**
      * Lloyd's algorithm with k-means++ initialization
-     * Improved version of existing kmeans function
      */
     void IVFPQ::kmeansWithPP(const std::vector<std::vector<float>> &P, int k, 
                       int iters, unsigned seed,
@@ -786,10 +785,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
             *outAssign = std::move(assign);
     }
     
-    /**
-     * Compute silhouette score for a given k (Slides 44-45)
-     * This builds temporary clustering with k clusters and evaluates it
-     */
+
     double IVFPQ::computeSilhouetteForK(int k, unsigned seed)
     {
         if (k <= 1 || k >= (int)data_.vectors.size())
@@ -813,7 +809,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 tempLists[assign[i]].push_back(i);
         }
         
-        // Compute silhouette score (Slide 44)
+        // Compute silhouette score ref 44
         double total = 0.0;
         int validPoints = 0;
         int N = (int)data_.vectors.size();
@@ -869,15 +865,6 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         return (validPoints > 0) ? total / validPoints : 0.0;
     }
     
-    /**
-     * Find optimal k using silhouette method (Slide 45 + Project Requirement)
-     * Tests range [kmin, kmax] and returns k with highest silhouette score
-     * 
-     * Usage for project:
-     * - For IVFFlat/IVFPQ: test range like [10, 100] with step 10
-     * - Choose k that maximizes overall silhouette
-     * - Can also check that per-cluster silhouettes are roughly equal
-     */
     int IVFPQ::findOptimalK(int kmin, int kmax, unsigned seed, int step)
     {
         if (kmin >= kmax || kmin < 2)
@@ -913,13 +900,7 @@ void IVFPQ::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         
         return bestK;
     }
-    
-    /**
-     * Enhanced version that also checks per-cluster silhouettes (Slide 45)
-     * Returns k where:
-     * 1) Overall silhouette is high
-     * 2) Per-cluster silhouettes are roughly equal (good separation)
-     */
+
     int IVFPQ::findOptimalKEnhanced(int kmin, int kmax, unsigned seed, int step)
     {
         std::cout << "\n=== Enhanced K Selection (Overall + Per-Cluster) ===\n";

@@ -56,7 +56,7 @@ private:
         return (long long)std::floor((dot + t_[li][j]) / w_);
     }
 
-    // Compute amplified ID(p) = Σ r_j h_j(p) mod M  (slide 21)
+    // Compute amplified ID(p) = Σ r_j h_j(p) mod M  ref 21
     std::uint64_t computeID(const std::vector<float> &v, int li) const;
 
 };

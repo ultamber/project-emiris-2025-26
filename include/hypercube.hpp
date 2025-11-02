@@ -10,15 +10,15 @@ private:
     int kproj_;  // d' in the PDF
     float w_;    // Bucket width for LSH
     
-    // LSH hash function parameters (Slide 18, 24)
+    // LSH hash function parameters ref 18, 24
     std::vector<std::vector<float>> proj_;   // Random projection vectors [kproj_][dim_]
     std::vector<float> shift_;                // Random shifts [kproj_]
     
-    // Bit mapping functions f_j (Slide 24)
+    // Bit mapping functions f_j ref 24
     std::vector<std::uint64_t> fA_;  // Hash coefficients for f_j [kproj_]
     std::vector<std::uint64_t> fB_;  // Hash offsets for f_j [kproj_]
     
-    // Hypercube storage (Slide 25)
+    // Hypercube storage ref 25
     bool denseCube_;  // Use dense or sparse representation
     std::vector<std::vector<int>> cubeDense_;  // Dense: [2^kproj_] vertices
     std::unordered_map<std::uint64_t, std::vector<int>> cubeSparse_;  // Sparse

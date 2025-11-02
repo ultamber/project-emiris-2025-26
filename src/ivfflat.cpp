@@ -21,7 +21,7 @@ double IVFFlat::l2(const std::vector<float> &a, const std::vector<float> &b) con
 }
 
 /**
- * Lloyd's algorithm for k-means clustering (Slide 31)
+ * Lloyd's algorithm for k-means clustering ref 31
  * @param P Training vectors
  * @param k Number of clusters
  * @param iters Maximum iterations
@@ -33,7 +33,7 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>> &P, int k, int iters,
     std::mt19937_64 rng(seed);
     std::uniform_int_distribution<int> uni(0, N - 1);
 
-    // Initialize: k distinct random centers (Slide 31)
+    // Initialize: k distinct random centers ref 31
     centroids_.assign(k, std::vector<float>(D, 0.0f));
     std::vector<int> init;
     init.reserve(k);
@@ -50,7 +50,7 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>> &P, int k, int iters,
     std::vector<int> assign(N, -1);
     std::vector<int> cnt(k, 0);
 
-    // Lloyd's EM iterations (Slide 31)
+    // Lloyd's EM iterations ref 31
     for (int it = 0; it < iters; ++it)
     {
         bool changed = false;
@@ -109,7 +109,7 @@ void IVFFlat::kmeans(const std::vector<std::vector<float>> &P, int k, int iters,
 }
 
 /**
- * Builds the IVF index (Slide 47)
+ * Builds the IVF index ref 47
  * 1) Run Lloyd's on √n subset X' to get centroids
  * 2) Assign ALL points to nearest centroid
  * 3) Build inverted lists
@@ -129,7 +129,7 @@ void IVFFlat::buildIndex(const Dataset &data)
         return;
     }
 
-    // Slide 47, Step 1: Run Lloyd's on √n training subset X'
+    // slide 47 Run Lloyd's on √n training subset X'
     int trainN = std::max(k_, (int)std::sqrt((double)N));
     trainN = std::min(trainN, N); // Don't exceed dataset size
 
@@ -144,17 +144,17 @@ void IVFFlat::buildIndex(const Dataset &data)
     for (int id : idx)
         Ptrain.push_back(data_.vectors[id].values);
 
-    // Slide 47, Step 1: Learn centroids C = {c₁, ..., cₖ}
+    // slide 47: Learn centroids C = {c₁, ..., cₖ}
     kmeansWithPP(Ptrain, k_, 25, (unsigned)args.seed, centroids_, nullptr);
     
-    // Slide 47, Step 2-3: Assignment phase - assign ALL points (not just training)
-    // to their nearest centroid j* and build inverted lists ILⱼ
+    // slide 47, Assignment phase - assign ALL points (not just training)
+    // to their nearest centroid j* and build inverted lists IL_j
     lists_.assign(k_, {});
     for (int i = 0; i < N; ++i)
     {
         const auto &x = data_.vectors[i].values;
         
-        // j*(x) = argmin ||x - cⱼ||₂
+        // j*(x) = argmin ||x - c_j||₂
         int best = 0;
         double bd = l2(x, centroids_[0]);
         for (int c = 1; c < k_; ++c)
@@ -167,15 +167,15 @@ void IVFFlat::buildIndex(const Dataset &data)
             }
         }
         
-        // Slide 47, Step 3: Append (id(x), x) to ILⱼ*(x)
+        // slide 47, Append (id(x), x) to IL_j*(x)
         lists_[best].push_back(i);
     }
 }
 
 /**
- * Performs IVF search (Slide 48)
- * 1) Coarse search: compute ||q - cⱼ||₂ for all centroids, select top b
- * 2) Fine search: compute distances to candidates in U = ⋃ⱼ∈S ILⱼ
+ * Performs IVF search ref 48
+ * 1) Coarse search: compute ||q - c_j||_2 for all centroids, select top b
+ * 2) Fine search: compute distances to candidates in U = ⋃_j belongs to S IL_j
  * 3) Return R nearest
  */
 void IVFFlat::search(const Dataset &queries, std::ofstream &out)
@@ -201,8 +201,8 @@ void IVFFlat::search(const Dataset &queries, std::ofstream &out)
         // === Approximate search using IVF ===
         auto t0 = high_resolution_clock::now();
 
-        // Slide 48, Step 1: Coarse search - evaluate all cells
-        // Compute ||q - cⱼ||₂ for j = 1, ..., k
+        // slide 48 Coarse search - evaluate all cells
+        // Compute ||q - c_j||_2 for j = 1, ..., k
         std::vector<std::pair<double, int>> centroidDists;
         centroidDists.reserve(k_);
         for (int c = 0; c < k_; ++c)
@@ -215,7 +215,7 @@ void IVFFlat::search(const Dataset &queries, std::ofstream &out)
                         centroidDists.end());
         std::sort(centroidDists.begin(), centroidDists.begin() + probeCount);
 
-        // Slide 48, Step 2: Collect candidates from U = ⋃ⱼ∈S ILⱼ
+        // slide 48 Collect candidates from U = ⋃_j∈S IL_j
         std::vector<int> candidates;
         size_t totalSize = 0;
         for (int i = 0; i < probeCount; ++i)
@@ -229,7 +229,7 @@ void IVFFlat::search(const Dataset &queries, std::ofstream &out)
             candidates.insert(candidates.end(), IL.begin(), IL.end());
         }
 
-        // Slide 48, Step 2: Compute d(q,x) = ||q - x||₂ for all x ∈ U
+        // slide 48 Compute d(q,x) = ||q - x||_2 for all x ∈ U
         std::vector<std::pair<double, int>> distApprox;
         distApprox.reserve(candidates.size());
         std::vector<int> rlist; // Range search results
@@ -242,7 +242,7 @@ void IVFFlat::search(const Dataset &queries, std::ofstream &out)
                 rlist.push_back(id);
         }
 
-        // Slide 48, Step 3: Return R nearest points from U
+        // slide 48, Return R nearest points from U
         int keepApprox = std::min(Nret, (int)distApprox.size());
         if (keepApprox > 0)
         {
@@ -341,7 +341,7 @@ void IVFFlat::search(const Dataset &queries, std::ofstream &out)
 }
 
 /**
- * Overall silhouette score (Slide 44-45)
+ * Overall silhouette score ref 44-45
  */
 double IVFFlat::silhouetteScore() const
 {
@@ -365,7 +365,7 @@ double IVFFlat::silhouetteScore() const
             continue;
         const auto &xi = data_.vectors[i].values;
 
-        // Slide 44: a(i) = average distance to objects in same cluster
+        // slide 44: a(i) = average distance to objects in same cluster
         double a_i = 0.0;
         int sameCount = 0;
         for (int id : lists_[ci])
@@ -380,7 +380,7 @@ double IVFFlat::silhouetteScore() const
         else
             a_i = 0.0;
 
-        // Slide 44: b(i) = average distance to next best cluster
+        // slide 44: b(i) = average distance to next best cluster
         double b_i = std::numeric_limits<double>::infinity();
         for (int c = 0; c < k; ++c)
         {
@@ -394,7 +394,7 @@ double IVFFlat::silhouetteScore() const
                 b_i = avg;
         }
 
-        // Slide 44: s(i) = (b(i) - a(i)) / max{a(i), b(i)}
+        // slide 44: s(i) = (b(i) - a(i)) / max{a(i), b(i)}
         double s_i = 0.0;
         if (a_i < b_i)
             s_i = 1.0 - (a_i / b_i);
@@ -411,7 +411,7 @@ double IVFFlat::silhouetteScore() const
 }
 
 /**
- * Per-cluster silhouette averages (Slide 45)
+ * Per-cluster silhouette averages ref 45
  */
 std::vector<double> IVFFlat::silhouettePerCluster() const
 {
@@ -501,13 +501,13 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         centroids.clear();
         centroids.reserve(k);
         
-        // Step 1: Choose first centroid uniformly at random
+        // Choose first centroid uniformly at random
         int firstIdx = uni(rng);
         centroids.push_back(P[firstIdx]);
         
         std::vector<double> minDist(N, std::numeric_limits<double>::infinity());
         
-        // Steps 2-4: Choose remaining k-1 centroids
+        // Choose remaining k-1 centroids
         for (int t = 1; t < k; ++t)
         {
             // Update D(i) = min distance to any chosen centroid
@@ -519,7 +519,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                     minDist[i] = d;
             }
             
-            // Normalize D(i) to avoid overflow (Slide 42)
+            // Normalize D(i) to avoid overflow ref 42)
             double maxD = *std::max_element(minDist.begin(), minDist.end());
             if (maxD <= 0.0) {
                 // All points are centroids, choose random
@@ -527,7 +527,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 continue;
             }
             
-            // Build partial sums: P(r) = Σ(i=1 to r) D(i)²
+            // Build partial sums: P(r) = Σ(i=1 to r) D(i)^2
             std::vector<double> partialSums(N, 0.0);
             partialSums[0] = (minDist[0] / maxD) * (minDist[0] / maxD);
             for (int i = 1; i < N; ++i)
@@ -536,7 +536,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 partialSums[i] = partialSums[i-1] + normDist * normDist;
             }
             
-            // Choose r with probability ∝ D(r)² (Slide 42)
+            // Choose r with probability ∝ D(r)^2 ref 42
             // Pick random x ∈ [0, P(N-1)] and find r where P(r-1) < x ≤ P(r)
             double x = unif(rng) * partialSums[N-1];
             
@@ -635,11 +635,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         if (outAssign)
             *outAssign = std::move(assign);
     }
-    
-    /**
-     * Compute silhouette score for a given k (Slides 44-45)
-     * This builds temporary clustering with k clusters and evaluates it
-     */
+
     double IVFFlat::computeSilhouetteForK(int k, unsigned seed)
     {
         if (k <= 1 || k >= (int)data_.vectors.size())
@@ -663,7 +659,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
                 tempLists[assign[i]].push_back(i);
         }
         
-        // Compute silhouette score (Slide 44)
+        // Compute silhouette score ref 44
         double total = 0.0;
         int validPoints = 0;
         int N = (int)data_.vectors.size();
@@ -718,16 +714,7 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         
         return (validPoints > 0) ? total / validPoints : 0.0;
     }
-    
-    /**
-     * Find optimal k using silhouette method (Slide 45 + Project Requirement)
-     * Tests range [kmin, kmax] and returns k with highest silhouette score
-     * 
-     * Usage for project:
-     * - For IVFFlat/IVFPQ: test range like [10, 100] with step 10
-     * - Choose k that maximizes overall silhouette
-     * - Can also check that per-cluster silhouettes are roughly equal
-     */
+
     int IVFFlat::findOptimalK(int kmin, int kmax, unsigned seed, int step)
     {
         if (kmin >= kmax || kmin < 2)
@@ -764,12 +751,6 @@ void IVFFlat::kmeanspp(const std::vector<std::vector<float>> &P, int k,
         return bestK;
     }
     
-    /**
-     * Enhanced version that also checks per-cluster silhouettes (Slide 45)
-     * Returns k where:
-     * 1) Overall silhouette is high
-     * 2) Per-cluster silhouettes are roughly equal (good separation)
-     */
     int IVFFlat::findOptimalKEnhanced(int kmin, int kmax, unsigned seed, int step )
     {
         std::cout << "\n=== Enhanced K Selection (Overall + Per-Cluster) ===\n";

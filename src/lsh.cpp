@@ -37,10 +37,10 @@ void LSH::buildIndex(const Dataset &data)
     int L = args.L > 0 ? args.L : 10;
     int k = args.k > 0 ? args.k : 4;
 
-    // TableSize heuristic (slide 20): n/4
+    // TableSize heuristic ref 20): n/4
     tableSize_ = std::max<size_t>(1, data_.vectors.size() / 4);
 
-    // Random number generators (slide 18-19)
+    // Random number generators ref 18-19)
     std::mt19937_64 rng(args.seed);
     std::normal_distribution<double> normal(0.0, 1.0);                        // For random projections a
     std::uniform_real_distribution<float> unif(0.0f, w_);                     // For random shifts t
@@ -51,7 +51,7 @@ void LSH::buildIndex(const Dataset &data)
     t_.assign(L, std::vector<float>(k, 0.0f));                                  // Random shifts
     r_.assign(L, std::vector<long long>(k));                                    // Integer coefficients for hash combination
 
-    // Generate random projections, shifts, and integer coefficients (slide 18)
+    // Generate random projections, shifts, and integer coefficients ref 18
     for (int li = 0; li < L; ++li)
     {
         for (int j = 0; j < k; ++j)
@@ -63,7 +63,7 @@ void LSH::buildIndex(const Dataset &data)
             // Generate random shift uniformly in [0, w)
             t_[li][j] = unif(rng);
 
-            // Generate random integer coefficient for hash combination (slide 20)
+            // Generate random integer coefficient for hash combination ref 20
             r_[li][j] = (long long)distR(rng);
         }
     }
@@ -77,13 +77,16 @@ void LSH::buildIndex(const Dataset &data)
         const auto &p = data_.vectors[id].values;
         for (int li = 0; li < L; ++li)
         {
-            // Compute ID(p) using hash function (slides 18, 20-21)
+            // Compute ID(p) using hash function 
+            // ref slides 18, 20-21
             std::uint64_t IDp = computeID(p, li);
 
-            // Compute bucket index g(p) = ID(p) mod TableSize (slide 20)
+            // Compute bucket index g(p) = ID(p) mod TableSize 
+            // ref slide 20
             std::uint64_t g = IDp % tableSize_;
 
-            // Store both point id and its ID for filtering (slide 21)
+            // Store both point id and its ID for filtering 
+            // ref slide 21
             tables_[li][g].push_back({id, IDp});
         }
     }
@@ -100,9 +103,7 @@ void LSH::buildIndex(const Dataset &data)
 }
 
 /**
- * Computes the ID for a vector using LSH hash functions (Slides 18, 20-21)
- * ID(p) = (r₁h₁(p) + r₂h₂(p) + ... + rₖhₖ(p)) mod M
- * where h(p) = floor((a·p + t)/w)
+ * Computes the ID for a vector using LSH hash functions (slides 18, 20-21)
  * @param v Input vector
  * @param li Index of the hash table
  * @return 64-bit ID value
@@ -111,19 +112,22 @@ std::uint64_t LSH::computeID(const std::vector<float> &v, int li) const
 {
     std::uint64_t ID = 0;
 
-    // Combine k hash functions (slide 20)
+    // Combine k hash functions 
+    // ref slide 20
     for (int j = 0; j < args.k; ++j)
     {
-        // Compute dot product for projection (slide 18)
+        // Compute dot product for projection 
+        // ref slide 18
         double dot = 0.0;
         for (int d = 0; d < dim_; ++d)
             dot += a_[li][j][d] * v[d];
 
-        // Apply LSH hash function: h(p) = floor((a·p + t)/w) (slide 18)
+        // Apply LSH hash function: h(p) = floor((a·p + t)/w)
+        // slide 18
         long long hj = (long long)std::floor((dot + t_[li][j]) / w_);
 
-        // Combine using random coefficients: ID = Σ rᵢhᵢ(p) mod M (slide 20)
-        // M = 2^32 - 5 is a large prime for good hash distribution
+        // Combine using random coefficients: ID = Σ r_ih_i(p) mod M 
+        // slide 20
         ID = (ID + (std::uint64_t)(r_[li][j] * hj)) % MOD_M;
 
         // Update diagnostic counters
@@ -145,7 +149,7 @@ std::uint64_t LSH::computeID(const std::vector<float> &v, int li) const
 std::uint64_t LSH::keyFor(const std::vector<float> &v, int li) const
 {
     std::uint64_t IDv = computeID(v, li);
-    return IDv % tableSize_; // g(p) = ID(p) mod TableSize (slide 20)
+    return IDv % tableSize_; // g(p) = ID(p) mod TableSize ref 20
 }
 
 /**
@@ -170,22 +174,24 @@ void LSH::search(const Dataset &queries, std::ofstream &out)
         const auto &q = queries.vectors[qi].values;
         auto t0 = high_resolution_clock::now();
 
-        // MULTI-PROBE LSH: Collect candidates from multiple buckets
+        // multi probe lsh: collect candidates from multiple buckets
         std::vector<int> candidates;
         size_t examined = 0;
 
-        // Hard cap on candidates to examine (slides 13-14: stop after ~10L to 20L items)
+        // Hard cap on candidates to examine 
+        // ref slides 13-14: stop after ~10L to 20L items
         size_t hardCap = args.rangeSearch ? 20 * args.L : 10 * args.L;
 
         // Probe all L tables
         for (int li = 0; li < args.L; ++li)
         {
-            // Compute query's hash value (slide 20-21)
+            // compute query's hash value
+            //  ref slide 20-21
             std::uint64_t IDq = computeID(q, li);
             std::uint64_t gq = IDq % tableSize_;
 
-            // MULTI-PROBE: Check main bucket + neighboring buckets (delta = -2 to +2)
-            // This significantly improves recall by finding near-collisions
+            // multi-probes: check main bucket + neighboring buckets (delta = -2 to +2)
+            // significantly improves recall by finding near-collisions
             for (int delta = -2; delta <= 2; ++delta)
             {
                 std::uint64_t gq2 = (gq + delta + tableSize_) % tableSize_;
@@ -195,7 +201,8 @@ void LSH::search(const Dataset &queries, std::ofstream &out)
                 {
                     if (delta == 0)
                     {
-                        // Exact bucket: use ID filtering (Slide 21 optimization)
+                        // Exact bucket: use ID filtering 
+                        // ref slide 21 
                         if (pr.second == IDq)
                             candidates.push_back(pr.first);
                     }
@@ -215,7 +222,7 @@ void LSH::search(const Dataset &queries, std::ofstream &out)
                 break;
         }
 
-        // Deduplicate candidates (same point may appear in multiple buckets)
+        // Deduplicate candidates 
         std::sort(candidates.begin(), candidates.end());
         candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
 
@@ -229,12 +236,14 @@ void LSH::search(const Dataset &queries, std::ofstream &out)
             double d = l2(q, data_.vectors[id].values);
             distApprox.emplace_back(d, id);
 
-            // Range search: collect points within radius R (slide 14)
+            // Range search: collect points within radius R 
+            // ref slide 14
             if (args.rangeSearch && d <= args.R)
                 rlist.push_back(id);
         }
 
-        // Find top N nearest neighbors (slide 13)
+        // Find top N nearest neighbors 
+        // ref slide 13
         int N = std::min(args.N, (int)distApprox.size());
         if (N > 0)
         {
