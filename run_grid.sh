@@ -64,6 +64,10 @@ if [[ "$TYPE" != "sift" && "$TYPE" != "mnist" ]]; then
   exit 1
 fi
 
+# Set OUTDIR based on TYPE
+OUTDIR="./runs/${TYPE}"
+mkdir -p "$OUTDIR"
+
 # If DATA/QUER were not explicitly provided, set sensible defaults based on TYPE
 if [[ -z "${DATA:-}" ]]; then
   if [[ "$TYPE" == "sift" ]]; then
